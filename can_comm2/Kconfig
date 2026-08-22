@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "Simple CAN peer communication"
+
+config BOARD_TX_CAN_ID
+	hex "Transmit CAN ID"
+	range 0x000 0x7ff
+	default 0x028
+	help
+	  Standard 11-bit CAN identifier used for frames transmitted by this
+	  board.
+
+config BOARD_RX_CAN_ID
+	hex "Receive CAN ID"
+	range 0x000 0x7ff
+	default 0x028
+	help
+	  Standard 11-bit CAN identifier accepted by this board's receive
+	  filter. Frames with other identifiers are ignored.
+
+source "Kconfig.zephyr"
