@@ -1,7 +1,7 @@
 Simple CAN peer communication
 =============================
 
-This application sends a standard CAN frame with ID ``0x123`` whenever
+This application sends a standard CAN frame with ID ``0x28`` whenever
 ``sw0`` is pressed. Receiving a frame with the same ID toggles ``led0``.
 
 Connect two boards to the same CAN bus, including CAN transceivers, CANH,
