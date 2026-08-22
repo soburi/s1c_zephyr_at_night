@@ -2,8 +2,8 @@
 
 Zephyr/zenoh-picoをZenoh clientとして動かし、UARTでPC上の`zenohd`へ接続する双方向Pub/Subサンプルです。
 
-- ボード → PC: `demo/zephyr/tx`へ1秒ごとにpublish
-- PC → ボード: `demo/zephyr/rx`をsubscribe（受信内容はRTTログへ表示）
+- NUCLEOのUSERボタン: LEDをトグルし、現在状態 (`on`/`off`) を`demo/nucleo/button`へpublish
+- PC → NUCLEO: `demo/nucleo/led`へデータが届くたびにLEDをトグル
 - UART: 115200 baud, 8-N-1, flow controlなし
 
 ## 配線とビルド
@@ -33,14 +33,15 @@ ls -l /dev/serial/by-id/
 zenohd -l 'serial//dev/ttyACM0#baudrate=115200'
 ```
 
-別ターミナルから確認します。`z_sub`/`z_pub`はzenoh-cのCLI examplesです。
+`zenohd`はルーターなので、購読とユーザー入力には別ターミナルで
+zenoh-cのCLI exampleである`z_sub`/`z_pub`を使います。
 
 ```sh
-# ボードからのpublishを受信
-z_sub -k 'demo/zephyr/tx'
+# USERボタンによるpublishを購読
+z_sub -k 'demo/nucleo/button'
 
-# ボードのsubscriberへ送信
-z_pub -k 'demo/zephyr/rx' -p 'hello from PC'
+# 実行するたび、NUCLEOのLEDが1回トグル
+z_pub -k 'demo/nucleo/led' -p 'toggle'
 ```
 
 シリアルデバイスを開けるプロセスは1つだけです。`screen`、シリアルモニタ、ModemManagerなどがVCPを掴んでいないことを確認してください。`zenohd`にserial transportが含まれている必要もあります。
