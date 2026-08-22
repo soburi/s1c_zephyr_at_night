@@ -6,6 +6,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 
+#define TX_MESSAGE_ID 0x28
+#define RX_MESSAGE_ID 0x29
 #define COMM_WORK_QUEUE_STACK_SIZE 1024
 #define COMM_WORK_QUEUE_PRIORITY 5
 
@@ -18,10 +20,13 @@ static struct k_work_q comm_work_q;
 static struct k_work can_send_work;
 K_THREAD_STACK_DEFINE(comm_work_q_stack, COMM_WORK_QUEUE_STACK_SIZE);
 
+/**
+ * CAN送信処理
+ */
 static void can_send_work_handler(struct k_work *work)
 {
 	const struct can_frame frame = {
-		.id = CONFIG_BOARD_TX_CAN_ID,
+		.id = TX_MESSAGE_ID,
 		.dlc = 1,
 		.data = { 1 },
 	};
@@ -37,22 +42,23 @@ static void can_send_work_handler(struct k_work *work)
 	}
 }
 
+/**
+ * ボタンが押された時の動作.
+ * CAN送信処理を実行待ちの列(work queue)に追加する
+ */
 static void button_pressed(const struct device *dev,
 			   struct gpio_callback *cb, uint32_t pins)
 {
-	ARG_UNUSED(dev);
-	ARG_UNUSED(cb);
-	ARG_UNUSED(pins);
-
 	k_work_submit_to_queue(&comm_work_q, &can_send_work);
 }
 
+/**
+ * CANメッセージを受け取ったときの動作
+ * LEDを反転させる
+ */
 static void can_received(const struct device *dev, struct can_frame *frame,
 			 void *user_data)
 {
-	ARG_UNUSED(dev);
-	ARG_UNUSED(user_data);
-
 	gpio_pin_toggle_dt(&led);
 	printk("CAN message received with ID 0x%03x\n", frame->id);
 }
@@ -60,7 +66,7 @@ static void can_received(const struct device *dev, struct can_frame *frame,
 int main(void)
 {
 	const struct can_filter filter = {
-		.id = CONFIG_BOARD_RX_CAN_ID,
+		.id = RX_MESSAGE_ID,
 		.mask = CAN_STD_ID_MASK,
 	};
 	int ret;
@@ -118,7 +124,7 @@ int main(void)
 	}
 
 	printk("Ready: TX ID 0x%03x, RX ID 0x%03x; press the button to send\n",
-	       CONFIG_BOARD_TX_CAN_ID, CONFIG_BOARD_RX_CAN_ID);
+	       TX_MESSAGE_ID, RX_MESSAGE_ID);
 	k_sleep(K_FOREVER);
 
 	return 0;

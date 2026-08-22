@@ -59,6 +59,7 @@ static void can_received(const struct device *dev, struct can_frame *frame,
 			 void *user_data)
 {
 	gpio_pin_toggle_dt(&led);
+	printk("CAN message received with ID 0x%03x\n", frame->id);
 }
 
 int main(void)
