@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+
+mainmenu "Simple CAN peer communication"
+
+source "Kconfig.zephyr"
