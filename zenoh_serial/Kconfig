@@ -1,0 +1,22 @@
+source "Kconfig.zephyr"
+
+menu "Zenoh serial sample"
+
+config APP_ZENOH_BAUDRATE
+	int "Zenoh UART baud rate"
+	default 115200
+
+config APP_ZENOH_PUB_PERIOD_MS
+	int "Publish period in milliseconds"
+	default 1000
+
+config APP_ZENOH_PUB_KEY
+	string "Key expression published by the board"
+	default "demo/zephyr/tx"
+
+config APP_ZENOH_SUB_KEY
+	string "Key expression subscribed by the board"
+	default "demo/zephyr/rx"
+
+endmenu
+
