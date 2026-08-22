@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: Apache-2.0 */
 
+#include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/can.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/kernel.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/sys/printk.h>
+#include <inttypes.h>
 
 #define CAN_MESSAGE_ID 0x28
 #define COMM_WORK_QUEUE_STACK_SIZE 1024
@@ -45,10 +47,10 @@ static void can_send_work_handler(struct k_work *work)
  * ボタンが押された時の動作.
  * CAN送信処理を実行待ちの列(work queue)に追加する
  */
-static void button_pressed(const struct device *dev,
-			   struct gpio_callback *cb, uint32_t pins)
+void button_pressed(const struct device *dev, struct gpio_callback *cb,
+		    uint32_t pins)
 {
-	k_work_submit_to_queue(&comm_work_q, &can_send_work);
+	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
 }
 
 /**
