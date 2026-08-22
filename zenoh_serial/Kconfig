@@ -1,0 +1,17 @@
+source "Kconfig.zephyr"
+
+menu "Zenoh serial sample"
+
+config APP_ZENOH_BAUDRATE
+	int "Zenoh UART baud rate"
+	default 115200
+
+config APP_ZENOH_PUB_KEY
+	string "Key expression published by the board"
+	default "demo/nucleo/button"
+
+config APP_ZENOH_SUB_KEY
+	string "Key expression subscribed by the board"
+	default "demo/nucleo/led"
+
+endmenu
