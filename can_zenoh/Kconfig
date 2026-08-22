@@ -1,0 +1,17 @@
+source "Kconfig.zephyr"
+
+menu "CAN-Zenoh gateway"
+
+config APP_ZENOH_BAUDRATE
+	int "Zenoh UART baud rate"
+	default 115200
+
+config APP_ZENOH_KEY_PREFIX
+	string "Zenoh key prefix"
+	default "can"
+	help
+	  The gateway publishes CAN input to <prefix>/<CAN ID>/rx and subscribes
+	  to <prefix>/*/tx for CAN output. IDs use three lowercase hex digits
+	  without a 0x prefix.
+
+endmenu
