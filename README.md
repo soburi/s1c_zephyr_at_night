@@ -51,14 +51,14 @@ pyocd list --targets | grep stm32c562re
 ```
 
 
-ツールの起動確認をします。以下のコマンドを実行します。
+ツールの起動確認をします。別のターミナルを開いて以下のコマンドを実行します。
 
 
 ```
-./s1c_zephyr_at_night/tools/zenohd
+swest28/s1c_zephyr_at_night/tools/zenohd  -l "tcp/127.0.0.1:7447"
 ```
 
-エラーなど発生せず、以下のログで待ち受けていれば成功です。Ctrl-Cの操作で終了します。
+エラーなど発生せず、以下のログで待ち受けていれば成功です。
 
 ```
 2026-08-23T22:22:57.528308Z  INFO main ThreadId(01) zenoh::net::runtime::orchestrator: Zenoh can be reached at: tcp/[240b:10:2f01:2600:6df0:fc2f:13f9:6de4]:7447
@@ -68,7 +68,7 @@ pyocd list --targets | grep stm32c562re
 2026-08-23T22:22:57.539451Z  INFO main ThreadId(01) zenoh::net::runtime::orchestrator: Listening scout messages on 224.0.0.224:7446
 ```
 
-pythonツールの起動確認をします。以下のコマンドを実行します。
+pythonツールの起動確認をします。** 元のターミナルで ** 以下のコマンドを実行します。
 
 ```
 python3 s1c_zephyr_at_night/tools/z_pub.py
@@ -132,14 +132,14 @@ findstr stm32c562re pyocd.targets.txt
 ```
 
 
-ツールの起動確認をします。以下のコマンドを実行します。
+ツールの起動確認をします。** 別のコマンドプロンプトを開いて ** 以下のコマンドを実行します。
 
 
 ```
-s1c_zephyr_at_night\tools\zenohd
+swest28\s1c_zephyr_at_night\tools\zenohd  -l "tcp/127.0.0.1:7447"
 ```
 
-エラーなど発生せず、以下のログで待ち受けていれば成功です。Ctrl-Cの操作で終了します。
+エラーなど発生せず、以下のログで待ち受けていれば成功です。
 
 ```
 2026-08-23T22:22:57.528308Z  INFO main ThreadId(01) zenoh::net::runtime::orchestrator: Zenoh can be reached at: tcp/[240b:10:2f01:2600:6df0:fc2f:13f9:6de4]:7447
@@ -149,7 +149,7 @@ s1c_zephyr_at_night\tools\zenohd
 2026-08-23T22:22:57.539451Z  INFO main ThreadId(01) zenoh::net::runtime::orchestrator: Listening scout messages on 224.0.0.224:7446
 ```
 
-pythonツールの起動確認をします。以下のコマンドを実行します。
+pythonツールの起動確認をします。** 元のコマンドプロンプトで ** 以下のコマンドを実行します。
 
 ```
 python s1c_zephyr_at_night\tools\z_pub.py

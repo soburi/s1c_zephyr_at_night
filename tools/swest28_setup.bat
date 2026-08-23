@@ -7,7 +7,7 @@ pushd swest28
 git clone https://github.com/soburi/s1c_zephyr_at_night
 py -m venv .venv
 call .venv\Scripts\Activate.bat
-pip3 install west
+pip3 install west eclipse-zenoh
 
 west init -l s1c_zephyr_at_night
 
