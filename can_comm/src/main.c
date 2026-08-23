@@ -97,9 +97,12 @@ static void can_send_work_handler(struct k_work *work)
 static void can_received(const struct device *dev, struct can_frame *frame,
 			 void *user_data)
 {
+	bool enabled = 0;
+
 	if (led.port) {
-		toggle_led(&led);
+		enabled = toggle_led(&led);
 	}
+
 	printk("CAN message received with ID 0x%03x\n", frame->id);
 }
 
@@ -110,26 +113,33 @@ int main(void)
 {
 	int ret;
 
-	const struct can_filter filter = {
-		.id = CAN_MESSAGE_ID,
-		.mask = CAN_STD_ID_MASK,
-	};
-
 	if (!device_is_ready(can_dev)) {
 		printk("CAN device is not ready\n");
 		return 0;
 	}
 
-	k_work_queue_start(&workq, workq_stack,
-			   K_THREAD_STACK_SIZEOF(workq_stack),
-			   COMM_WORK_QUEUE_PRIORITY, NULL);
-	k_work_init(&can_send_work, can_send_work_handler);
+	const struct can_filter filter = {
+		.id = CAN_MESSAGE_ID,
+		.mask = CAN_STD_ID_MASK,
+	};
 
 	ret = can_add_rx_filter(can_dev, can_received, NULL, &filter);
 	if (ret < 0) {
 		printk("CAN receive filter registration failed (%d)\n", ret);
 		return 0;
 	}
+
+	ret = can_start(can_dev);
+	if (ret != 0) {
+		printk("CAN start failed (%d)\n", ret);
+		return 0;
+	}
+
+
+	k_work_queue_start(&workq, workq_stack,
+			   K_THREAD_STACK_SIZEOF(workq_stack),
+			   COMM_WORK_QUEUE_PRIORITY, NULL);
+	k_work_init(&can_send_work, can_send_work_handler);
 
 	if (!gpio_is_ready_dt(&button)) {
 		printk("Error: button device %s is not ready\n",
@@ -172,17 +182,11 @@ int main(void)
 		}
 	}
 
-	ret = can_start(can_dev);
-	if (ret != 0) {
-		printk("CAN start failed (%d)\n", ret);
-		return 0;
-	}
-
 	printk("Press the button\n");
 
 	/* CAN受信処理でLED状態を変化させるので、LED状態を変化させるループは削除。
-         * 無期限の待ちに入る
-         */
+	 * 無期限の待ちに入る
+	 */
 	k_sleep(K_FOREVER);
 
 	return 0;

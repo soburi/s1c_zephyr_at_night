@@ -92,7 +92,12 @@ static void zenoh_publish_work_handler(struct k_work *work)
 
 static void on_sample(z_loaned_sample_t *sample, void *context)
 {
-	bool enabled = toggle_led(&led);
+	bool enabled = 0;
+
+	if (led.port) {
+		enabled = toggle_led(&led);
+	}
+
 	z_view_string_t key;
 	z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key);
 	printk("RX %.*s: LED -> %s\n", (int)z_string_len(z_loan(key)),
@@ -106,10 +111,10 @@ int main(void)
 {
 	int ret;
 
-        k_work_queue_start(&workq, workq_stack,
-                           K_THREAD_STACK_SIZEOF(workq_stack),
-                           COMM_WORK_QUEUE_PRIORITY, NULL);
-        k_work_init(&zenoh_publish_work, zenoh_publish_work_handler);
+	if (!device_is_ready(zenoh_uart_dev)) {
+		printk("CAN device is not ready\n");
+		return 0;
+	}
 
 	char locator[LOCATOR_SIZE];
 	(void)snprintf(locator, sizeof(locator), "serial/%s#baudrate=%d",
@@ -131,6 +136,15 @@ int main(void)
 		return 0;
 	}
 
+
+	z_view_keyexpr_t pub_key;
+	z_view_keyexpr_from_str_unchecked(&pub_key, CONFIG_APP_ZENOH_PUB_KEY);
+	if (z_declare_publisher(z_loan(session), &publisher, z_loan(pub_key), NULL) < 0) {
+		printk("Could not declare publisher for %s\n", CONFIG_APP_ZENOH_PUB_KEY);
+		z_drop(z_move(session));
+		return 0;
+	}
+
 	z_view_keyexpr_t sub_key;
 	z_view_keyexpr_from_str_unchecked(&sub_key, CONFIG_APP_ZENOH_SUB_KEY);
 	z_owned_closure_sample_t callback;
@@ -140,17 +154,15 @@ int main(void)
 				 z_move(callback), NULL) < 0) {
 		printk("Could not subscribe to %s\n", CONFIG_APP_ZENOH_SUB_KEY);
 		z_drop(z_move(session));
+		z_drop(z_move(subscriber));
 		return 0;
 	}
 
-	z_view_keyexpr_t pub_key;
-	z_view_keyexpr_from_str_unchecked(&pub_key, CONFIG_APP_ZENOH_PUB_KEY);
-	if (z_declare_publisher(z_loan(session), &publisher, z_loan(pub_key), NULL) < 0) {
-		printk("Could not declare publisher for %s\n", CONFIG_APP_ZENOH_PUB_KEY);
-		z_drop(z_move(subscriber));
-		z_drop(z_move(session));
-		return 0;
-	}
+
+	k_work_queue_start(&workq, workq_stack,
+			   K_THREAD_STACK_SIZEOF(workq_stack),
+			   COMM_WORK_QUEUE_PRIORITY, NULL);
+	k_work_init(&zenoh_publish_work, zenoh_publish_work_handler);
 
 	if (!gpio_is_ready_dt(&button)) {
 		printk("Error: button device %s is not ready\n",
@@ -193,11 +205,10 @@ int main(void)
 		}
 	}
 
-
 	printk("Ready: button PUB %s, remote SUB %s\n", CONFIG_APP_ZENOH_PUB_KEY,
 		CONFIG_APP_ZENOH_SUB_KEY);
 
-        k_sleep(K_FOREVER);
+	k_sleep(K_FOREVER);
 
 	return 0;
 }
