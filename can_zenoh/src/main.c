@@ -57,6 +57,8 @@ static const struct device *const zenoh_uart_dev = DEVICE_DT_GET(DT_ALIAS(zenoh_
 
 static z_owned_session_t session;
 
+static void publish_status(uint32_t msgid);
+
 /**
  * LEDを反転して状態を取得する
  * @param led 操作対象のGPIO
@@ -180,7 +182,7 @@ static void can_received(const struct device *dev, struct can_frame *frame,
 	(void)k_work_submit(&can_rx_work);
 }
 
-void publish_status(uint32_t msgid)
+static void publish_status(uint32_t msgid)
 {
 	char key[KEY_SIZE];
 	z_view_keyexpr_t keyexpr;
