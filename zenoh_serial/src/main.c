@@ -106,7 +106,7 @@ static int can_id_from_key(const char *key, size_t key_len, uint32_t *id)
 		*id = (*id << 4) | (uint32_t)digit;
 	}
 
-	return *id <= 0x7ffU ? 0 : -EINVAL;
+	return *id <= CAN_STD_ID_MASK ? 0 : -EINVAL;
 }
 
 void publish_status(uint32_t msgid, uint8_t enabled)
