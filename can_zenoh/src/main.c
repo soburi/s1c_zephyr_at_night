@@ -3,23 +3,27 @@
  * Copyright (c) 2020 Nordic Semiconductor ASA
  *
  * SPDX-License-Identifier: Apache-2.0
- *
- * NOTE: If you are looking into an implementation of button events with
- * debouncing, check out `input` subsystem and `samples/subsys/input/input_dump`
- * example instead.
  */
 
-#include <zephyr/kernel.h>
+#include <errno.h>
+#include <inttypes.h>
+#include <stdio.h>
+#include <string.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/can.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/sys/util.h>
+#include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
-#include <inttypes.h>
-
+#include <zephyr/sys/util.h>
 #include <zenoh-pico.h>
 
-#define SLEEP_TIME_MS	1
+#define LED_NODE DT_ALIAS(led0)
+#define SW0_NODE DT_ALIAS(sw0)
+#if !DT_NODE_HAS_STATUS_OKAY(SW0_NODE)
+#error "Unsupported board: sw0 devicetree alias is not defined"
+#endif
+#define LOCATOR_SIZE 96
+#define KEY_SIZE 96
 #define CAN_MESSAGE_ID 0x28
 #define COMM_WORK_QUEUE_STACK_SIZE 1024
 #define COMM_WORK_QUEUE_PRIORITY 5
@@ -31,30 +35,6 @@
 #if !DT_NODE_HAS_STATUS_OKAY(SW0_NODE)
 #error "Unsupported board: sw0 devicetree alias is not defined"
 #endif
-
-#define LED_NODE DT_ALIAS(led0)
-#define LOCATOR_SIZE 96
-#define KEY_SIZE 96
-#define EVENT_QUEUE_DEPTH 16
-
-enum gateway_event_type {
-	EVENT_CAN_RECEIVED,
-	EVENT_CAN_REQUESTED,
-};
-
-struct gateway_event {
-	enum gateway_event_type type;
-	struct can_frame frame;
-};
-
-struct can_event {
-	int id;
-};
-
-struct zenoh_event {
-
-}:
-
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios,
 							      {0});
 static struct gpio_callback button_cb_data;
@@ -69,14 +49,7 @@ static struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios,
 static const struct device *const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
 static const struct device *const zenoh_uart_dev = DEVICE_DT_GET(DT_ALIAS(zenoh_uart));
 
-static struct k_work_q workq;
-static struct k_work can_send_work;
-static struct k_work zenoh_publish_work;
-K_THREAD_STACK_DEFINE(workq_stack, COMM_WORK_QUEUE_STACK_SIZE);
-
-z_owned_publisher_t publisher;
-K_MSGQ_DEFINE(can_events, sizeof(struct gateway_event), EVENT_QUEUE_DEPTH, 4);
-K_MSGQ_DEFINE(zenoh_events, sizeof(struct gateway_event), EVENT_QUEUE_DEPTH, 4);
+static z_owned_session_t session;
 
 static bool toggle_led(struct gpio_dt_spec *led)
 {
@@ -96,7 +69,6 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb,
 		    uint32_t pins)
 {
 	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
-	k_work_submit_to_queue(&workq, &zenoh_publish_work);
 }
 
 /**
@@ -121,6 +93,34 @@ static void can_send_work_handler(struct k_work *work)
 	}
 }
 
+static int hex_digit(char value)
+{
+	if (value >= '0' && value <= '9') return value - '0';
+	if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+	if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+	return -EINVAL;
+}
+
+static int can_id_from_key(const char *key, size_t key_len, uint32_t *id)
+{
+	const char *prefix = CONFIG_APP_ZENOH_KEY_PREFIX;
+	const size_t prefix_len = strlen(prefix);
+
+	if (key_len != prefix_len + sizeof("/000/tx") - 1 ||
+	    memcmp(key, prefix, prefix_len) != 0 || key[prefix_len] != '/' ||
+	    memcmp(&key[prefix_len + 4], "/tx", 3) != 0) {
+		return -EINVAL;
+	}
+
+	*id = 0;
+	for (size_t i = prefix_len + 1; i < prefix_len + 4; ++i) {
+		const int digit = hex_digit(key[i]);
+		if (digit < 0) return -EINVAL;
+		*id = (*id << 4) | (uint32_t)digit;
+	}
+	return *id <= CAN_STD_ID_MASK ? 0 : -EINVAL;
+}
+
 /**
  * CANメッセージを受け取ったときの動作
  * LEDを反転させる
@@ -134,140 +134,78 @@ static void can_received(const struct device *dev, struct can_frame *frame,
 		enabled = toggle_led(&led);
 	}
 
-	printk("CAN message received with ID 0x%03x\n", frame->id);
 
-	struct gateway_event event = {
-		.type = EVENT_CAN_RECEIVED,
-		.frame = *frame,
-	};
+	char key[KEY_SIZE];
+	z_view_keyexpr_t keyexpr;
+	z_owned_bytes_t payload;
+	int ret;
 
 	ARG_UNUSED(dev);
 	ARG_UNUSED(user_data);
-	if ((frame->flags & CAN_FRAME_RTR) != 0) {
+	if ((frame->flags & CAN_FRAME_RTR) != 0) return;
+
+	ret = snprintf(key, sizeof(key), "%s/%03x/rx",
+		       CONFIG_APP_ZENOH_KEY_PREFIX, frame->id);
+	if (ret < 0 || (size_t)ret >= sizeof(key)) {
+		printk("CAN -> Zenoh key is too long\n");
 		return;
 	}
-	if (k_msgq_put(&gateway_events, &event, K_NO_WAIT) != 0) {
-		LOG_WRN("Gateway event queue full; dropping received CAN frame");
+	z_view_keyexpr_from_str_unchecked(&keyexpr, key);
+	if (z_bytes_copy_from_buf(&payload, frame->data, frame->dlc) < 0) {
+		printk("CAN -> Zenoh payload allocation failed\n");
+		return;
 	}
+	if (z_put(z_loan(session), z_loan(keyexpr), z_move(payload), NULL) < 0) {
+		printk("CAN -> Zenoh failed: %s\n", key);
+		return;
+	}
+	if (led.port != NULL) (void)toggle_led(&led);
+	printk("CAN -> Zenoh: 0x%03x (%u bytes) -> %s\n",
+	       frame->id, frame->dlc, key);
 }
 
-static void zenoh_publish_work_handler(struct k_work *work)
+/* Zenoh RX callback: send immediately, without an intermediate queue. */
+static void on_zenoh_sample(z_loaned_sample_t *sample, void *context)
 {
-	bool enabled = toggle_led(&led);
-	const char *state = enabled ? "on" : "off";
-	z_owned_bytes_t payload;
-
-	z_bytes_copy_from_str(&payload, state);
-	if (z_publisher_put(z_loan(publisher), z_move(payload), NULL) < 0) {
-		printk("Button publish failed\n");
-	} else {
-		if (enabled) {
-			printk("Button: LED -> on,");
-		} else {
-			printk("Button: LED -> off,");
-		}
-		printk("TX %s = %s\n", CONFIG_APP_ZENOH_PUB_KEY, state);
-	}
-}
-
-static void on_sample(z_loaned_sample_t *sample, void *context)
-{
+	const z_loaned_bytes_t *payload = z_sample_payload(sample);
+	struct can_frame frame = {0};
+	z_bytes_reader_t reader;
+	const size_t len = z_bytes_len(payload);
+	int ret;
 	bool enabled = 0;
 
 	if (led.port) {
 		enabled = toggle_led(&led);
 	}
 
+	if (len > CAN_MAX_DLEN) {
+		printk("Zenoh -> CAN ignored: payload is %u bytes (max %u)\n",
+		       (unsigned int)len, CAN_MAX_DLEN);
+		return;
+	}
+
 	z_view_string_t key;
 	z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key);
 	printk("RX %.*s: LED -> %s\n", (int)z_string_len(z_loan(key)),
 		z_string_data(z_loan(key)), enabled ? "on" : "off");
-}
 
-static void queue_can_transmit(uint32_t id, const uint8_t *data, size_t len)
-{
-	struct gateway_event event = {
-		.type = EVENT_CAN_REQUESTED,
-		.frame = {
-			.id = id,
-			.dlc = len,
-		},
-	};
-
-	if (len > 0) {
-		memcpy(event.frame.data, data, len);
-	}
-	if (k_msgq_put(&gateway_events, &event, K_NO_WAIT) != 0) {
-		LOG_WRN("Gateway event queue full; dropping CAN transmit request");
-	}
-}
-
-static int hex_digit(char value)
-{
-	if (value >= '0' && value <= '9') {
-		return value - '0';
-	}
-	if (value >= 'a' && value <= 'f') {
-		return value - 'a' + 10;
-	}
-	if (value >= 'A' && value <= 'F') {
-		return value - 'A' + 10;
-	}
-	return -EINVAL;
-}
-
-static int can_id_from_key(const char *key, size_t key_len, uint32_t *id)
-{
-	const char *prefix = CONFIG_APP_ZENOH_KEY_PREFIX;
-	size_t prefix_len = strlen(prefix);
-	int digit;
-
-	if (key_len != prefix_len + sizeof("/000/tx") - 1 ||
-	    memcmp(key, prefix, prefix_len) != 0 || key[prefix_len] != '/' ||
-	    memcmp(&key[prefix_len + 4], "/tx", 3) != 0) {
-		return -EINVAL;
-	}
-
-	*id = 0;
-	for (size_t i = prefix_len + 1; i < prefix_len + 4; ++i) {
-		digit = hex_digit(key[i]);
-		if (digit < 0) {
-			return -EINVAL;
-		}
-		*id = (*id << 4) | digit;
-	}
-	return *id <= CAN_STD_ID_MASK ? 0 : -EINVAL;
-}
-
-
-static void on_zenoh_sample(z_loaned_sample_t *sample, void *context)
-{
-	const z_loaned_bytes_t *payload = z_sample_payload(sample);
-	z_view_string_t key;
-	size_t len = z_bytes_len(payload);
-	uint8_t data[CAN_MAX_DLEN];
-	uint32_t id;
-	z_bytes_reader_t reader;
-
-	ARG_UNUSED(context);
-	if (len > CAN_MAX_DLEN) {
-		LOG_WRN("Zenoh payload is %u bytes; classic CAN allows at most %u",
-			(unsigned int)len, CAN_MAX_DLEN);
+	if (can_id_from_key(z_string_data(z_loan(key)),
+			    z_string_len(z_loan(key)), &frame.id) != 0) {
+		printk("Zenoh -> CAN ignored: invalid key\n");
 		return;
 	}
-	z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key);
-	if (can_id_from_key(z_string_data(z_loan(key)), z_string_len(z_loan(key)),
-			    &id) != 0) {
-		LOG_WRN("Ignoring invalid CAN transmit key");
-		return;
-	}
-
+	frame.dlc = (uint8_t)len;
 	reader = z_bytes_get_reader(payload);
-	if (z_bytes_reader_read(&reader, data, len) != len) {
-		LOG_WRN("Could not read Zenoh payload");
+	if (z_bytes_reader_read(&reader, frame.data, len) != len) {
+		printk("Zenoh -> CAN failed: could not read payload\n");
 		return;
 	}
-	queue_can_transmit(id, data, len);
+	ret = can_send(can_dev, &frame, K_MSEC(100), NULL, NULL);
+	if (ret != 0) {
+		printk("Zenoh -> CAN failed for 0x%03x (%d)\n", frame.id, ret);
+		return;
+	}
+	printk("Zenoh -> CAN: 0x%03x (%u bytes)\n", frame.id, frame.dlc);
 }
 
 /*
@@ -275,6 +213,10 @@ static void on_zenoh_sample(z_loaned_sample_t *sample, void *context)
  */
 int main(void)
 {
+	char subscribe_key[KEY_SIZE];
+	z_view_keyexpr_t sub_key;
+	z_owned_closure_sample_t callback;
+	z_owned_subscriber_t subscriber;
 	int ret;
 
 	if (!device_is_ready(can_dev)) {
@@ -283,13 +225,13 @@ int main(void)
 	}
 
 	if (!device_is_ready(zenoh_uart_dev)) {
-		printk("CAN device is not ready\n");
+		printk("Zenoh UART device is not ready\n");
 		return 0;
 	}
 
 	const struct can_filter filter = {
-		.id = CAN_MESSAGE_ID,
-		.mask = CAN_STD_ID_MASK,
+		.id = 0,
+		.mask = 0,
 	};
 
 	ret = can_add_rx_filter(can_dev, can_received, NULL, &filter);
@@ -305,11 +247,10 @@ int main(void)
 	}
 
 	char locator[LOCATOR_SIZE];
-	char subscribe_key[KEY_SIZE];
 	(void)snprintf(locator, sizeof(locator), "serial/%s#baudrate=%d",
 		zenoh_uart_dev->name, CONFIG_APP_ZENOH_BAUDRATE);
 	(void)snprintf(subscribe_key, sizeof(subscribe_key), "%s/*/tx",
-		CONFIG_APP_ZENOH_KEY_PREFIX);
+		       CONFIG_APP_ZENOH_KEY_PREFIX);
 	printk("Connecting to zenohd at %s\n", locator);
 
 	z_owned_config_t config;
@@ -321,39 +262,26 @@ int main(void)
 		return 0;
 	}
 
-	z_owned_session_t session;
 	if (z_open(&session, z_move(config), NULL) < 0) {
 		printk("Could not open the Zenoh session; check UART and zenohd\n");
 		return 0;
 	}
 
-
-	z_view_keyexpr_t pub_key;
-	z_view_keyexpr_from_str_unchecked(&pub_key, CONFIG_APP_ZENOH_PUB_KEY);
-	if (z_declare_publisher(z_loan(session), &publisher, z_loan(pub_key), NULL) < 0) {
-		printk("Could not declare publisher for %s\n", CONFIG_APP_ZENOH_PUB_KEY);
-		z_drop(z_move(session));
-		return 0;
-	}
-
-	z_view_keyexpr_t sub_key;
 	z_view_keyexpr_from_str_unchecked(&sub_key, subscribe_key);
-	z_owned_closure_sample_t callback;
 	z_closure(&callback, on_zenoh_sample, NULL, NULL);
-	z_owned_subscriber_t subscriber;
 	if (z_declare_subscriber(z_loan(session), &subscriber, z_loan(sub_key),
 				 z_move(callback), NULL) < 0) {
 		printk("Could not subscribe to %s\n", subscribe_key);
 		z_drop(z_move(session));
-		z_drop(z_move(subscriber));
 		return 0;
 	}
 
-	k_work_queue_start(&workq, workq_stack,
-			   K_THREAD_STACK_SIZEOF(workq_stack),
-			   COMM_WORK_QUEUE_PRIORITY, NULL);
-	k_work_init(&can_send_work, can_send_work_handler);
-	k_work_init(&zenoh_publish_work, zenoh_publish_work_handler);
+	if (ret != 0) {
+		printk("CAN start failed (%d)\n", ret);
+		z_drop(z_move(subscriber));
+		z_drop(z_move(session));
+		return 0;
+	}
 
 	if (!gpio_is_ready_dt(&button)) {
 		printk("Error: button device %s is not ready\n",
@@ -396,13 +324,10 @@ int main(void)
 		}
 	}
 
-	printk("Ready: button PUB %s, remote SUB %s\n", CONFIG_APP_ZENOH_PUB_KEY,
-		CONFIG_APP_ZENOH_SUB_KEY);
+	printk("Ready: CAN -> %s/<ID>/rx, %s -> CAN\n",
+		CONFIG_APP_ZENOH_KEY_PREFIX, subscribe_key);
 
 	k_sleep(K_FOREVER);
-
-	printk("Ready: CAN -> %s/<ID>/rx, %s -> CAN", 
-		CONFIG_APP_ZENOH_KEY_PREFIX, subscribe_key);
 
 	return 0;
 }
