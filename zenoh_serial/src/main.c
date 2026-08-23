@@ -176,7 +176,7 @@ static void can_received(const struct device *dev, struct can_frame *frame,
 	(void)k_work_submit(&can_rx_work);
 }
 #endif
-void publish_status(uint32_t msgid, uint8_t enabled)
+void publish_status(uint32_t msgid)
 {
 	char key[KEY_SIZE];
 	z_view_keyexpr_t keyexpr;
@@ -189,7 +189,7 @@ void publish_status(uint32_t msgid, uint8_t enabled)
 		return;
 	}
 	z_view_keyexpr_from_str_unchecked(&keyexpr, key);
-	if (z_bytes_copy_from_buf(&payload, &enabled, 1) < 0) {
+	if (z_bytes_copy_from_buf(&payload, NULL, 0) < 0) {
 		printk("CAN -> Zenoh payload allocation failed\n");
 		return;
 	}
@@ -260,7 +260,7 @@ static void button_work_handler(struct k_work *work)
 		enabled = toggle_led(&led);
 	}
 
-	publish_status(CAN_MESSAGE_ID_TARGET, enabled);
+	publish_status(CAN_MESSAGE_ID_TARGET);
 }
 
 /**

@@ -158,6 +158,8 @@ static void can_rx_work_handler(struct k_work *work)
 			}
 		}
 
+		publish_status(received_id);
+
 		printk("CAN message received with ID 0x%03x\n", received_id);
 	}
 }
@@ -178,7 +180,7 @@ static void can_received(const struct device *dev, struct can_frame *frame,
 	(void)k_work_submit(&can_rx_work);
 }
 
-void publish_status(uint32_t msgid, uint8_t enabled)
+void publish_status(uint32_t msgid)
 {
 	char key[KEY_SIZE];
 	z_view_keyexpr_t keyexpr;
@@ -191,7 +193,7 @@ void publish_status(uint32_t msgid, uint8_t enabled)
 		return;
 	}
 	z_view_keyexpr_from_str_unchecked(&keyexpr, key);
-	if (z_bytes_copy_from_buf(&payload, &enabled, 1) < 0) {
+	if (z_bytes_copy_from_buf(&payload, NULL, 0) < 0) {
 		printk("CAN -> Zenoh payload allocation failed\n");
 		return;
 	}
@@ -212,7 +214,13 @@ static void zenoh_publish_work_handler(struct k_work *work)
 	uint32_t received_id;
 	int ret;
 
-	while (k_msgq_get(&can_rx_queue, &received_id, K_NO_WAIT) == 0) {
+	while (k_msgq_get(&zenoh_sub_queue, &received_id, K_NO_WAIT) == 0) {
+		if (led.port) {
+			if (received_id == CAN_MESSAGE_ID_SELF) {
+				(void)toggle_led(&led);
+			}
+		}
+
 		frame.id = received_id;
 		frame.dlc = 0;
 		ret = can_send(can_dev, &frame, K_MSEC(100), NULL, NULL);
@@ -265,6 +273,7 @@ static void button_work_handler(struct k_work *work)
 	}
 
 	send_status_can_msg(CAN_MESSAGE_ID_TARGET);
+	publish_status(CAN_MESSAGE_ID_TARGET);
 }
 
 /**
