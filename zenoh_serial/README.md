@@ -1,49 +1,49 @@
 # Zenoh Pub/Sub over serial
 
-Zephyr/zenoh-picoをZenoh clientとして動かし、UARTでPC上の`zenohd`へ接続する双方向Pub/Subサンプルです。
+Zephyr/zenoh-picoをZenoh clientとして動かし、UARTでPC上の`zenohd`へ接続する
+Pub/Subサンプルです。CAN通信は行いませんが、CAN IDと同じ番号をZenoh keyに
+入れ、次の`can_zenoh`と同じ見え方を確認します。
 
-- NUCLEOのUSERボタン: LEDをトグルし、現在状態 (`on`/`off`) を`demo/nucleo/button`へpublish
-- PC → NUCLEO: `demo/nucleo/led`へデータが届くたびにLEDをトグル
-- UART: 115200 baud, 8-N-1, flow controlなし
+## IDとkey
 
-## 配線とビルド
+`src/main.c`のIDを対向相手と組になるように変更します。
 
-既定ターゲットはNUCLEO-C562REです。オンボードST-LINKのVirtual COM Portに接続されたUSART2 (PA2/PA3)をZenoh専用に使います。ログはUARTへ混ぜずRTTへ出します。
+```c
+#define CAN_MESSAGE_ID_SELF   0x028 /* 自分がsubscribeして反応するID */
+#define CAN_MESSAGE_ID_TARGET 0x029 /* publish先となる対向相手のID */
+```
+
+keyの形式は次のとおりです。現在のサンプルではpayloadは空で、keyに含まれる
+IDを通信内容として扱います。
+
+```text
+can/<ID>/rx  ボードからpublish
+can/<ID>/tx  ボードがsubscribe
+```
+
+ボタンを押すと`can/<TARGET>/rx`へpublishします。`can/<SELF>/tx`を受信すると
+LEDが反転します。実装では`can/*/tx`をsubscribeし、keyからIDを取り出して
+`SELF`と比較します。
+
+## ビルドと接続
 
 ```sh
 west build -b nucleo_c562re zenoh_serial -p always
 west flash
-```
-
-別のボードでは、`boards/<board>.overlay`を追加し、Zenohに使うUARTへ`zenoh-uart` aliasを設定してください。例:
-
-```dts
-/ { aliases { zenoh-uart = &usart1; }; };
-&usart1 { current-speed = <115200>; status = "okay"; };
-```
-
-UART名はdevicetreeから自動取得します。速度やkey expressionは`menuconfig`またはoverlay用confで`CONFIG_APP_ZENOH_*`を変更できます。
-
-## PC側
-
-ボードのVCPを確認し、シリアルをlistenする`zenohd`を起動します（ポート名は環境に合わせて変更）。
-
-```sh
-ls -l /dev/serial/by-id/
 zenohd -l 'serial//dev/ttyACM0#baudrate=115200'
 ```
 
-`zenohd`はルーターなので、購読とユーザー入力には別ターミナルで
-zenoh-cのCLI exampleである`z_sub`/`z_pub`を使います。
+NUCLEO-C562REではUSART2をZenoh専用に使い、ログはRTTへ出します。`zenohd`が使う
+シリアルデバイスは、シリアルモニターなどで同時に開かないでください。
+
+## PC側からの確認
 
 ```sh
-# USERボタンによるpublishを購読
-z_sub -k 'demo/nucleo/button'
+# 全受講者のpublishを確認
+z_sub -k 'can/*/rx'
 
-# 実行するたび、NUCLEOのLEDが1回トグル
-z_pub -k 'demo/nucleo/led' -p 'toggle'
+# ID 0x028の装置を反応させる
+z_pub -k 'can/028/tx' -p ''
 ```
 
-シリアルデバイスを開けるプロセスは1つだけです。`screen`、シリアルモニタ、ModemManagerなどがVCPを掴んでいないことを確認してください。`zenohd`にserial transportが含まれている必要もあります。
-
-RTTログはJ-Link RTT Viewer、または環境にあるRTT対応ツールで確認できます。ログに`Zenoh session opened`が出た後、送受信が始まります。
+`*`はその位置の任意の1セグメントに一致します。
