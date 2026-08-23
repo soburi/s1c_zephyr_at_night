@@ -19,8 +19,6 @@
 
 #define SLEEP_TIME_MS	1
 #define CAN_MESSAGE_ID 0x28
-#define COMM_WORK_QUEUE_STACK_SIZE 1024
-#define COMM_WORK_QUEUE_PRIORITY 5
 
 /*
  * Get button configuration from the devicetree sw0 alias. This is mandatory.
@@ -42,10 +40,6 @@ static struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios,
 
 static const struct device *const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
 
-static struct k_work_q workq;
-static struct k_work can_send_work;
-K_THREAD_STACK_DEFINE(workq_stack, COMM_WORK_QUEUE_STACK_SIZE);
-
 
 static bool toggle_led(struct gpio_dt_spec *led)
 {
@@ -59,35 +53,6 @@ static bool toggle_led(struct gpio_dt_spec *led)
 
 	(void)gpio_pin_set_dt(led, led_state);
 	return led_state;
-}
-
-void button_pressed(const struct device *dev, struct gpio_callback *cb,
-		    uint32_t pins)
-{
-	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
-	k_work_submit_to_queue(&workq, &can_send_work);
-}
-
-/**
- * CAN送信処理
- */
-static void can_send_work_handler(struct k_work *work)
-{
-	const struct can_frame frame = {
-		.id = CAN_MESSAGE_ID,
-		.dlc = 1,
-		.data = { 1 },
-	};
-	int ret;
-
-	ARG_UNUSED(work);
-
-	ret = can_send(can_dev, &frame, K_MSEC(100), NULL, NULL);
-	if (ret != 0) {
-		printk("CAN send failed (%d)\n", ret);
-	} else {
-		printk("CAN message sent\n");
-	}
 }
 
 /**
@@ -104,6 +69,37 @@ static void can_received(const struct device *dev, struct can_frame *frame,
 	}
 
 	printk("CAN message received with ID 0x%03x\n", frame->id);
+}
+
+void send_status_can_msg(uint32_t canid, uint8_t enabled)
+{
+	struct can_frame frame = {0};
+	int ret;
+
+	frame.id = canid;
+	frame.dlc = 1;
+	frame.data[0] = enabled;
+
+	ret = can_send(can_dev, &frame, K_MSEC(100), NULL, NULL);
+	if (ret != 0) {
+		printk("Zenoh -> CAN failed for 0x%03x (%d)\n", frame.id, ret);
+		return;
+	}
+	printk("Zenoh -> CAN: 0x%03x (%u bytes)\n", frame.id, frame.dlc);
+}
+
+void button_pressed(const struct device *dev, struct gpio_callback *cb,
+		    uint32_t pins)
+{
+	bool enabled = 0;
+
+	if (led.port) {
+		enabled = toggle_led(&led);
+	}
+
+	send_status_can_msg(CAN_MESSAGE_ID, enabled);
+
+	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
 }
 
 /*
@@ -134,12 +130,6 @@ int main(void)
 		printk("CAN start failed (%d)\n", ret);
 		return 0;
 	}
-
-
-	k_work_queue_start(&workq, workq_stack,
-			   K_THREAD_STACK_SIZEOF(workq_stack),
-			   COMM_WORK_QUEUE_PRIORITY, NULL);
-	k_work_init(&can_send_work, can_send_work_handler);
 
 	if (!gpio_is_ready_dt(&button)) {
 		printk("Error: button device %s is not ready\n",
