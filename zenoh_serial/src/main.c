@@ -21,14 +21,14 @@
 #define SLEEP_TIME_MS	1
 #define CAN_MESSAGE_ID_SELF   0x28
 #define CAN_MESSAGE_ID_TARGET 0x28
-#define ZENOH_SUBSCRUBE_QUEUE_SIZE     16
+#define ZENOH_SUBSCRIBE_QUEUE_SIZE     16
 #define LOCATOR_SIZE 96
 #define KEY_SIZE 96
 #define COMM_WORK_QUEUE_STACK_SIZE 1024
 #define COMM_WORK_QUEUE_PRIORITY 5
 #define APP_ZENOH_KEY_PREFIX "can"
 
-K_MSGQ_DEFINE(zenoh_sub_queue, sizeof(uint32_t), ZENOH_SUBSCRUBE_QUEUE_SIZE, sizeof(uint32_t));
+K_MSGQ_DEFINE(zenoh_sub_queue, sizeof(uint32_t), ZENOH_SUBSCRIBE_QUEUE_SIZE, sizeof(uint32_t));
 
 /*
  * デバイスツリーのsw0 のエイリアスをボタンとして使う。必須。
@@ -115,68 +115,8 @@ static int can_id_from_key(const char *key, size_t key_len, uint32_t *id)
 
 	return *id <= CAN_STD_ID_MASK ? 0 : -EINVAL;
 }
-#if 0
-/**
- * 1バイトのcanメッセージを送信
- * @param canid CAN ID
- * @param enabled 送信メッセージ(LED状態)
- */
-void send_status_can_msg(uint32_t canid, uint8_t enabled)
-{
-	struct can_frame frame = {0};
-	int ret;
 
-	frame.id = canid;
-	frame.dlc = 1;
-	frame.data[0] = enabled;
-
-	ret = can_send(can_dev, &frame, K_NO_WAIT, NULL, NULL);
-	if (ret != 0) {
-		printk("Zenoh -> CAN failed for 0x%03x (%d)\n", frame.id, ret);
-		return;
-	}
-	printk("Zenoh -> CAN: 0x%03x (%u bytes)\n", frame.id, frame.dlc);
-}
-
-/**
- * CANメッセージ受信時に遅延実行で行う処理
- * キューに入れたデータを取得して、自分のIDが指定されていたら
- * LEDを反転する。
- */
-static void can_rx_work_handler(struct k_work *work)
-{
-	uint32_t received_id;
-
-	ARG_UNUSED(work);
-
-	while (k_msgq_get(&can_rx_queue, &received_id, K_NO_WAIT) == 0) {
-		if (led.port) {
-			if (received_id == CAN_MESSAGE_ID_SELF) {
-				(void)toggle_led(&led);
-			}
-		}
-
-		printk("CAN message received with ID 0x%03x\n", received_id);
-	}
-}
-
-/**
- * CANメッセージを受け取ったときの動作
- * idの情報をキューに入れる
- */
-static void can_received(const struct device *dev, struct can_frame *frame,
-			 void *user_data)
-{
-	uint32_t id = frame->id;
-
-	if (k_msgq_put(&can_rx_queue, &id, K_NO_WAIT) != 0) {
-		return;
-	}
-
-	(void)k_work_submit(&can_rx_work);
-}
-#endif
-void publish_status(uint32_t msgid)
+static void publish_status(uint32_t msgid)
 {
 	char key[KEY_SIZE];
 	z_view_keyexpr_t keyexpr;
@@ -208,8 +148,6 @@ static void zenoh_publish_work_handler(struct k_work *work)
 {
 	uint32_t received_id;
 
-	ARG_UNUSED(work);
-
 	while (k_msgq_get(&zenoh_sub_queue, &received_id, K_NO_WAIT) == 0) {
 		if (led.port) {
 			if (received_id == CAN_MESSAGE_ID_SELF) {
@@ -217,12 +155,12 @@ static void zenoh_publish_work_handler(struct k_work *work)
 			}
 		}
 
-		printk("CAN message received with ID 0x%03x\n", received_id);
+		printk("Zenoh message received for ID 0x%03x\n", received_id);
 	}
 }
 
 /**
- * CANメッセージを受け取ったときの動作
+ * Zenoh sampleを受け取ったときの動作
  * keyからidを抽出して、キューに入れる
  */
 static void on_zenoh_sample(z_loaned_sample_t *sample, void *context)

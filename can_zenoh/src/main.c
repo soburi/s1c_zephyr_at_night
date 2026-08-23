@@ -22,7 +22,7 @@
 #define CAN_MESSAGE_ID_SELF   0x28
 #define CAN_MESSAGE_ID_TARGET 0x28
 #define CAN_RX_QUEUE_SIZE     16
-#define ZENOH_SUBSCRUBE_QUEUE_SIZE     16
+#define ZENOH_SUBSCRIBE_QUEUE_SIZE     16
 #define LOCATOR_SIZE 96
 #define KEY_SIZE 96
 #define COMM_WORK_QUEUE_STACK_SIZE 1024
@@ -30,7 +30,7 @@
 #define APP_ZENOH_KEY_PREFIX "can"
 
 K_MSGQ_DEFINE(can_rx_queue, sizeof(uint32_t), CAN_RX_QUEUE_SIZE, sizeof(uint32_t));
-K_MSGQ_DEFINE(zenoh_sub_queue, sizeof(uint32_t), ZENOH_SUBSCRUBE_QUEUE_SIZE, sizeof(uint32_t));
+K_MSGQ_DEFINE(zenoh_sub_queue, sizeof(uint32_t), ZENOH_SUBSCRIBE_QUEUE_SIZE, sizeof(uint32_t));
 
 /*
  * デバイスツリーのsw0 のエイリアスをボタンとして使う。必須。
@@ -167,7 +167,7 @@ static void can_rx_work_handler(struct k_work *work)
 }
 
 /**
- * CANメッセージを受け取ったときの動作
+ * Zenoh sampleを受け取ったときの動作
  * idの情報をキューに入れる
  */
 static void can_received(const struct device *dev, struct can_frame *frame,
@@ -314,7 +314,7 @@ int main(void)
 	/* CANメッセージ受信時に実行するwork の初期化. */
 	k_work_init(&can_rx_work, can_rx_work_handler);
 
-	/* 指定のCAN IDのみ受信するようにフィルタを設定 */
+	/* 全CAN IDを受信するフィルタを設定 */
 	ret = can_add_rx_filter(can_dev, can_received, NULL, &filter);
 	if (ret < 0) {
 		printk("CAN receive filter registration failed (%d)\n", ret);

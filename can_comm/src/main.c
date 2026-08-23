@@ -77,10 +77,10 @@ void send_status_can_msg(uint32_t canid)
 
 	ret = can_send(can_dev, &frame, K_NO_WAIT, NULL, NULL);
 	if (ret != 0) {
-		printk("Zenoh -> CAN failed for 0x%03x (%d)\n", frame.id, ret);
+		printk("CAN send failed for 0x%03x (%d)\n", frame.id, ret);
 		return;
 	}
-	printk("Zenoh -> CAN: 0x%03x (%u bytes)\n", frame.id, frame.dlc);
+	printk("CAN message sent: 0x%03x (%u bytes)\n", frame.id, frame.dlc);
 }
 
 /**
@@ -162,14 +162,14 @@ int main(void)
 	}
 
 	const struct can_filter filter = {
-		.id = CAN_MESSAGE_ID_SELF,
-		.mask = CAN_STD_ID_MASK,
+		.id = 0,
+		.mask = 0,
 	};
 
 	/* CANメッセージ受信時に実行するwork の初期化. */
 	k_work_init(&can_rx_work, can_rx_work_handler);
 
-	/* 指定のCAN IDのみ受信するようにフィルタを設定 */
+	/* 全CAN IDを受信するフィルタを設定 */
 	ret = can_add_rx_filter(can_dev, can_received, NULL, &filter);
 	if (ret < 0) {
 		printk("CAN receive filter registration failed (%d)\n", ret);
