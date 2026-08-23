@@ -18,7 +18,8 @@
 #include <inttypes.h>
 
 #define SLEEP_TIME_MS	1
-#define CAN_MESSAGE_ID 0x28
+#define CAN_MESSAGE_ID_SELF   0x28
+#define CAN_MESSAGE_ID_TARGET 0x28
 
 /*
  * Get button configuration from the devicetree sw0 alias. This is mandatory.
@@ -55,22 +56,6 @@ static bool toggle_led(struct gpio_dt_spec *led)
 	return led_state;
 }
 
-/**
- * CANメッセージを受け取ったときの動作
- * LEDを反転させる
- */
-static void can_received(const struct device *dev, struct can_frame *frame,
-			 void *user_data)
-{
-	bool enabled = 0;
-
-	if (led.port) {
-		enabled = toggle_led(&led);
-	}
-
-	printk("CAN message received with ID 0x%03x\n", frame->id);
-}
-
 void send_status_can_msg(uint32_t canid, uint8_t enabled)
 {
 	struct can_frame frame = {0};
@@ -88,6 +73,22 @@ void send_status_can_msg(uint32_t canid, uint8_t enabled)
 	printk("Zenoh -> CAN: 0x%03x (%u bytes)\n", frame.id, frame.dlc);
 }
 
+/**
+ * CANメッセージを受け取ったときの動作
+ * LEDを反転させる
+ */
+static void can_received(const struct device *dev, struct can_frame *frame,
+			 void *user_data)
+{
+	bool enabled = 0;
+
+	if (led.port) {
+		enabled = toggle_led(&led);
+	}
+
+	printk("CAN message received with ID 0x%03x\n", frame->id);
+}
+
 void button_pressed(const struct device *dev, struct gpio_callback *cb,
 		    uint32_t pins)
 {
@@ -97,7 +98,7 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb,
 		enabled = toggle_led(&led);
 	}
 
-	send_status_can_msg(CAN_MESSAGE_ID, enabled);
+	send_status_can_msg(CAN_MESSAGE_ID_TARGET, enabled);
 
 	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
 }
@@ -115,7 +116,7 @@ int main(void)
 	}
 
 	const struct can_filter filter = {
-		.id = CAN_MESSAGE_ID,
+		.id = CAN_MESSAGE_ID_SELF,
 		.mask = CAN_STD_ID_MASK,
 	};
 

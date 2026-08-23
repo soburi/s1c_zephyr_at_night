@@ -19,9 +19,9 @@
 #include <zenoh-pico.h>
 
 #define SLEEP_TIME_MS	1
+#define CAN_MESSAGE_ID_TARGET 0x28
 #define LOCATOR_SIZE 96
 #define KEY_SIZE 96
-#define CAN_MESSAGE_ID 0x28
 #define COMM_WORK_QUEUE_STACK_SIZE 1024
 #define COMM_WORK_QUEUE_PRIORITY 5
 #define APP_ZENOH_KEY_PREFIX "can"
@@ -102,12 +102,13 @@ static void on_zenoh_sample(z_loaned_sample_t *sample, void *context)
 void button_pressed(const struct device *dev, struct gpio_callback *cb,
 		    uint32_t pins)
 {
-	int enabled = 0;
+	bool enabled = 0;
 
 	if (led.port) {
 		enabled = toggle_led(&led);
 	}
-	publish_status(CAN_MESSAGE_ID, (uint8_t)enabled);
+
+	publish_status(CAN_MESSAGE_ID_TARGET, enabled);
 
 	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
 }
