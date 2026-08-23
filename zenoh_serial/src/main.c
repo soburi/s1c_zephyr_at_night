@@ -122,7 +122,7 @@ int main(void)
 	z_view_keyexpr_t sub_key;
 	z_owned_closure_sample_t callback;
 	z_owned_subscriber_t subscriber;
-	int ret;
+	int ret = 0;
 
 	if (!device_is_ready(zenoh_uart_dev)) {
 		printk("Zenoh UART device is not ready\n");
@@ -145,10 +145,14 @@ int main(void)
 		return 0;
 	}
 
+	printk("%d\n", __LINE__);
+
 	if (z_open(&session, z_move(config), NULL) < 0) {
 		printk("Could not open the Zenoh session; check UART and zenohd\n");
 		return 0;
 	}
+
+	printk("%d\n", __LINE__);
 
 	z_view_keyexpr_from_str_unchecked(&sub_key, subscribe_key);
 	z_closure(&callback, on_zenoh_sample, NULL, NULL);
@@ -159,6 +163,8 @@ int main(void)
 		return 0;
 	}
 
+	printk("%d\n", __LINE__);
+
 	if (ret != 0) {
 		printk("CAN start failed (%d)\n", ret);
 		z_drop(z_move(subscriber));
@@ -166,11 +172,15 @@ int main(void)
 		return 0;
 	}
 
+	printk("%d\n", __LINE__);
+
 	if (!gpio_is_ready_dt(&button)) {
 		printk("Error: button device %s is not ready\n",
 		       button.port->name);
 		return 0;
 	}
+
+	printk("%d\n", __LINE__);
 
 	ret = gpio_pin_configure_dt(&button, GPIO_INPUT);
 	if (ret != 0) {
@@ -178,6 +188,8 @@ int main(void)
 		       ret, button.port->name, button.pin);
 		return 0;
 	}
+
+	printk("%d\n", __LINE__);
 
 	ret = gpio_pin_interrupt_configure_dt(&button,
 					      GPIO_INT_EDGE_TO_ACTIVE);
@@ -187,7 +199,10 @@ int main(void)
 		return 0;
 	}
 
+	printk("%d\n", __LINE__);
 	gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
+	printk("%d\n", __LINE__);
+
 	gpio_add_callback(button.port, &button_cb_data);
 	printk("Set up button at %s pin %d\n", button.port->name, button.pin);
 
