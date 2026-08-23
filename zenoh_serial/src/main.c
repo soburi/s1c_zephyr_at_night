@@ -62,24 +62,14 @@ static bool toggle_led(struct gpio_dt_spec *led)
 	return led_state;
 }
 
-void button_pressed(const struct device *dev, struct gpio_callback *cb,
-		    uint32_t pins)
+void publish_status(uint32_t msgid, uint8_t enabled)
 {
-	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
-	uint8_t enabled = 0;
-
-	if (led.port) {
-		enabled = (uint8_t)toggle_led(&led);
-	}
-
-
 	char key[KEY_SIZE];
 	z_view_keyexpr_t keyexpr;
 	z_owned_bytes_t payload;
 	int ret;
 
-	ret = snprintf(key, sizeof(key), "%s/%03x/rx",
-		       APP_ZENOH_KEY_PREFIX, CAN_MESSAGE_ID);
+	ret = snprintf(key, sizeof(key), "%s/%03x/rx", APP_ZENOH_KEY_PREFIX, msgid);
 	if (ret < 0 || (size_t)ret >= sizeof(key)) {
 		printk("CAN -> Zenoh key is too long\n");
 		return;
@@ -107,6 +97,19 @@ static void on_zenoh_sample(z_loaned_sample_t *sample, void *context)
 	z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key);
 	printk("RX %.*s: LED -> %s\n", (int)z_string_len(z_loan(key)),
 		z_string_data(z_loan(key)), enabled ? "on" : "off");
+}
+
+void button_pressed(const struct device *dev, struct gpio_callback *cb,
+		    uint32_t pins)
+{
+	int enabled = 0;
+
+	if (led.port) {
+		enabled = toggle_led(&led);
+	}
+	publish_status(CAN_MESSAGE_ID, (uint8_t)enabled);
+
+	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
 }
 
 /*
