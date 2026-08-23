@@ -42,9 +42,31 @@ static struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios,
 
 static const struct device *const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
 
-static struct k_work_q comm_work_q;
+static struct k_work_q workq;
 static struct k_work can_send_work;
-K_THREAD_STACK_DEFINE(comm_work_q_stack, COMM_WORK_QUEUE_STACK_SIZE);
+K_THREAD_STACK_DEFINE(workq_stack, COMM_WORK_QUEUE_STACK_SIZE);
+
+
+static bool toggle_led(struct gpio_dt_spec *led)
+{
+	int led_state = 0;
+
+	if (gpio_pin_get_dt(led) == 0) {
+		led_state = 1;
+	} else {
+		led_state = 0;
+	}
+
+	(void)gpio_pin_set_dt(led, led_state);
+	return led_state;
+}
+
+void button_pressed(const struct device *dev, struct gpio_callback *cb,
+		    uint32_t pins)
+{
+	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
+	k_work_submit_to_queue(&workq, &can_send_work);
+}
 
 /**
  * CAN送信処理
@@ -76,19 +98,14 @@ static void can_received(const struct device *dev, struct can_frame *frame,
 			 void *user_data)
 {
 	if (led.port) {
-		gpio_pin_toggle_dt(&led);
+		toggle_led(&led);
 	}
 	printk("CAN message received with ID 0x%03x\n", frame->id);
 }
 
-
-void button_pressed(const struct device *dev, struct gpio_callback *cb,
-		    uint32_t pins)
-{
-	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
-	k_work_submit_to_queue(&comm_work_q, &can_send_work);
-}
-
+/*
+ * main
+ */
 int main(void)
 {
 	int ret;
@@ -103,8 +120,8 @@ int main(void)
 		return 0;
 	}
 
-	k_work_queue_start(&comm_work_q, comm_work_q_stack,
-			   K_THREAD_STACK_SIZEOF(comm_work_q_stack),
+	k_work_queue_start(&workq, workq_stack,
+			   K_THREAD_STACK_SIZEOF(workq_stack),
 			   COMM_WORK_QUEUE_PRIORITY, NULL);
 	k_work_init(&can_send_work, can_send_work_handler);
 
