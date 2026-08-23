@@ -20,6 +20,9 @@
 #define SLEEP_TIME_MS	1
 #define CAN_MESSAGE_ID_SELF   0x28
 #define CAN_MESSAGE_ID_TARGET 0x28
+#define CAN_RX_QUEUE_SIZE     16
+
+K_MSGQ_DEFINE(can_rx_queue, sizeof(uint32_t), CAN_RX_QUEUE_SIZE, sizeof(uint32_t));
 
 /*
  * Get button configuration from the devicetree sw0 alias. This is mandatory.
@@ -31,6 +34,8 @@
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios,
 							      {0});
 static struct gpio_callback button_cb_data;
+static struct k_work button_work;
+static struct k_work can_rx_work;
 
 /*
  * The led0 devicetree alias is optional. If present, we'll use it
@@ -39,7 +44,7 @@ static struct gpio_callback button_cb_data;
 static struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios,
 						     {0});
 
-static const struct device *const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
+static static const struct device *const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
 
 
 static bool toggle_led(struct gpio_dt_spec *led)
@@ -80,17 +85,31 @@ void send_status_can_msg(uint32_t canid, uint8_t enabled)
 static void can_received(const struct device *dev, struct can_frame *frame,
 			 void *user_data)
 {
-	bool enabled = 0;
+	uint32_t id = frame->id;
 
-	if (led.port) {
-		enabled = toggle_led(&led);
+	if (k_msgq_put(&can_rx_queue, &id, K_NO_WAIT) != 0) {
+		return;
 	}
 
-	printk("CAN message received with ID 0x%03x\n", frame->id);
+	(void)k_work_submit(&can_rx_work);
 }
 
-void button_pressed(const struct device *dev, struct gpio_callback *cb,
-		    uint32_t pins)
+static void can_rx_work_handler(struct k_work *work)
+{
+	uint32_t received_id;
+
+	ARG_UNUSED(work);
+
+	while (k_msgq_get(&can_rx_queue, &received_id, K_NO_WAIT) == 0) {
+		if (led.port) {
+			(void)toggle_led(&led);
+		}
+
+		printk("CAN message received with ID 0x%03x\n", received_id);
+	}
+}
+
+static void button_work_handler(struct k_work *work)
 {
 	bool enabled = 0;
 
@@ -101,6 +120,12 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb,
 	send_status_can_msg(CAN_MESSAGE_ID_TARGET, enabled);
 
 	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
+}
+
+static void button_pressed(const struct device *dev, struct gpio_callback *cb,
+		    uint32_t pins)
+{
+	(void)k_work_submit(&button_work);
 }
 
 /*
@@ -119,6 +144,8 @@ int main(void)
 		.id = CAN_MESSAGE_ID_SELF,
 		.mask = CAN_STD_ID_MASK,
 	};
+
+	k_work_init(&can_rx_work, can_rx_work_handler);
 
 	ret = can_add_rx_filter(can_dev, can_received, NULL, &filter);
 	if (ret < 0) {
@@ -153,6 +180,7 @@ int main(void)
 		return 0;
 	}
 
+	k_work_init(&button_work, button_work_handler);
 	gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
 	gpio_add_callback(button.port, &button_cb_data);
 	printk("Set up button at %s pin %d\n", button.port->name, button.pin);
