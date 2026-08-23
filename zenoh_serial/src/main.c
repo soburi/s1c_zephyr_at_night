@@ -14,7 +14,9 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/printk.h>
+#include <errno.h>
 #include <inttypes.h>
+#include <string.h>
 
 #include <zenoh-pico.h>
 
@@ -67,6 +69,46 @@ static bool toggle_led(struct gpio_dt_spec *led)
 	return led_state;
 }
 
+static int hex_digit(char value)
+{
+	if (value >= '0' && value <= '9') {
+		return value - '0';
+	}
+	if (value >= 'a' && value <= 'f') {
+		return value - 'a' + 10;
+	}
+	if (value >= 'A' && value <= 'F') {
+		return value - 'A' + 10;
+	}
+
+	return -EINVAL;
+}
+
+static int can_id_from_key(const char *key, size_t key_len, uint32_t *id)
+{
+	const char *prefix = APP_ZENOH_KEY_PREFIX;
+	const size_t prefix_len = strlen(prefix);
+
+	/* Expected key format: "<prefix>/<3-digit CAN ID>/tx". */
+	if (key_len != prefix_len + sizeof("/000/tx") - 1 ||
+	    memcmp(key, prefix, prefix_len) != 0 || key[prefix_len] != '/' ||
+	    memcmp(&key[prefix_len + 4], "/tx", 3) != 0) {
+		return -EINVAL;
+	}
+
+	*id = 0;
+	for (size_t i = prefix_len + 1; i < prefix_len + 4; ++i) {
+		const int digit = hex_digit(key[i]);
+
+		if (digit < 0) {
+			return -EINVAL;
+		}
+		*id = (*id << 4) | (uint32_t)digit;
+	}
+
+	return *id <= 0x7ffU ? 0 : -EINVAL;
+}
+
 void publish_status(uint32_t msgid, uint8_t enabled)
 {
 	char key[KEY_SIZE];
@@ -111,7 +153,17 @@ static void on_zenoh_sample(z_loaned_sample_t *sample, void *context)
 {
 	uint32_t id;
 	z_view_string_t key;
+
+	ARG_UNUSED(context);
+
 	z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key);
+	if (can_id_from_key(z_string_data(z_loan(key)),
+			    z_string_len(z_loan(key)), &id) != 0) {
+		printk("Zenoh message ignored: invalid key %.*s\n",
+		       (int)z_string_len(z_loan(key)),
+		       z_string_data(z_loan(key)));
+		return;
+	}
 
 	if (k_msgq_put(&can_rx_queue, &id, K_NO_WAIT) != 0) {
 		return;
