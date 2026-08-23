@@ -53,6 +53,11 @@ static const struct device *const zenoh_uart_dev = DEVICE_DT_GET(DT_ALIAS(zenoh_
 
 static z_owned_session_t session;
 
+/**
+ * LEDを反転して状態を取得する
+ * @param led 操作対象のGPIO
+ * @return LEDの状態
+ */
 static bool toggle_led(struct gpio_dt_spec *led)
 {
 	int led_state = 0;
@@ -67,6 +72,7 @@ static bool toggle_led(struct gpio_dt_spec *led)
 	return led_state;
 }
 
+/* 16進数の文字を数値にする */
 static int hex_digit(char value)
 {
 	if (value >= '0' && value <= '9') {
@@ -82,6 +88,10 @@ static int hex_digit(char value)
 	return -EINVAL;
 }
 
+/**
+ * keyからcan idを抽出する.
+ * key は "<prefix>/nnn/tx"の形式. e.g. "can/028/tx" この場合 0x028 = 40
+ */
 static int can_id_from_key(const char *key, size_t key_len, uint32_t *id)
 {
 	const char *prefix = APP_ZENOH_KEY_PREFIX;
@@ -130,6 +140,11 @@ void publish_status(uint32_t msgid, uint8_t enabled)
 	}
 }
 
+/**
+ * zenohのsubscribeから受信した時に遅延実行で行う処理
+ * キューに入れたデータを取得して、自分のIDが指定されていたら
+ * LEDを反転する。
+ */
 static void zenoh_publish_work_handler(struct k_work *work)
 {
 	uint32_t received_id;
@@ -147,6 +162,10 @@ static void zenoh_publish_work_handler(struct k_work *work)
 	}
 }
 
+/**
+ * CANメッセージを受け取ったときの動作
+ * keyからidを抽出して、キューに入れる
+ */
 static void on_zenoh_sample(z_loaned_sample_t *sample, void *context)
 {
 	uint32_t id;
@@ -202,7 +221,6 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb,
  */
 int main(void)
 {
-	char subscribe_key[KEY_SIZE];
 	z_view_keyexpr_t sub_key;
 	z_owned_closure_sample_t callback;
 	z_owned_subscriber_t subscriber;
@@ -213,33 +231,46 @@ int main(void)
 		return 0;
 	}
 
-	/* CANメッセージ受信時に実行するwork の初期化. */
+	/* zenoh subscribe受信時に実行するwork の初期化. */
 	k_work_init(&zenoh_publish_work, zenoh_publish_work_handler);
+	/* 接続の識別子(locator)とsubscribeするキーの文字列初期化 */
 	char locator[LOCATOR_SIZE];
+	char subscribe_key[KEY_SIZE];
 	(void)snprintf(locator, sizeof(locator), "serial/%s#baudrate=%d",
 		zenoh_uart_dev->name, CONFIG_APP_ZENOH_BAUDRATE);
 	(void)snprintf(subscribe_key, sizeof(subscribe_key), "%s/*/tx",
 		       APP_ZENOH_KEY_PREFIX);
 	printk("Connecting to zenohd at %s\n", locator);
 
+	/* configの設定 */
 	z_owned_config_t config;
 	z_config_default(&config);
-	if (zp_config_insert(z_loan_mut(config), Z_CONFIG_MODE_KEY, "client") < 0 ||
-	    zp_config_insert(z_loan_mut(config), Z_CONFIG_CONNECT_KEY, locator) < 0) {
-		printk("Failed to create Zenoh configuration\n");
+	ret = zp_config_insert(z_loan_mut(config), Z_CONFIG_MODE_KEY, "client");
+	if (ret < 0) {
+		printk("Failed to insert client key\n");
+		z_drop(z_move(config));
+		return 0;
+	}
+	ret = zp_config_insert(z_loan_mut(config), Z_CONFIG_CONNECT_KEY, locator);
+	if (ret < 0) {
+		printk("Failed to nsert locator\n");
 		z_drop(z_move(config));
 		return 0;
 	}
 
-	if (z_open(&session, z_move(config), NULL) < 0) {
+	/* zenohの通信を開始する */
+	ret = z_open(&session, z_move(config), NULL);
+	if (ret < 0) {
 		printk("Could not open the Zenoh session; check UART and zenohd\n");
 		return 0;
 	}
 
+	/* トピックにsubscribeする */
 	z_view_keyexpr_from_str_unchecked(&sub_key, subscribe_key);
 	z_closure(&callback, on_zenoh_sample, NULL, NULL);
-	if (z_declare_subscriber(z_loan(session), &subscriber, z_loan(sub_key),
-				 z_move(callback), NULL) < 0) {
+	ret = z_declare_subscriber(z_loan(session), &subscriber, z_loan(sub_key),
+				 z_move(callback), NULL);
+	if (ret < 0) {
 		printk("Could not subscribe to %s\n", subscribe_key);
 		z_drop(z_move(session));
 		return 0;

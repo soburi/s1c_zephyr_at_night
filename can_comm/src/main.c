@@ -15,7 +15,6 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/printk.h>
-#include <inttypes.h>
 
 #define SLEEP_TIME_MS	1
 #define CAN_MESSAGE_ID_SELF   0x28
