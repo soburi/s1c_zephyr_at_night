@@ -44,7 +44,7 @@ static struct k_work can_rx_work;
 static struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios,
 						     {0});
 
-static static const struct device *const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
+static const struct device *const can_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_canbus));
 
 
 static bool toggle_led(struct gpio_dt_spec *led)
@@ -118,13 +118,12 @@ static void button_work_handler(struct k_work *work)
 	}
 
 	send_status_can_msg(CAN_MESSAGE_ID_TARGET, enabled);
-
-	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
 }
 
-static void button_pressed(const struct device *dev, struct gpio_callback *cb,
+void button_pressed(const struct device *dev, struct gpio_callback *cb,
 		    uint32_t pins)
 {
+	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
 	(void)k_work_submit(&button_work);
 }
 
