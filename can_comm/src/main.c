@@ -66,16 +66,14 @@ static bool toggle_led(struct gpio_dt_spec *led)
 /**
  * 1バイトのcanメッセージを送信
  * @param canid CAN ID
- * @param enabled 送信メッセージ(LED状態)
  */
-void send_status_can_msg(uint32_t canid, uint8_t enabled)
+void send_status_can_msg(uint32_t canid)
 {
 	struct can_frame frame = {0};
 	int ret;
 
 	frame.id = canid;
-	frame.dlc = 1;
-	frame.data[0] = enabled;
+	frame.dlc = 0;
 
 	ret = can_send(can_dev, &frame, K_NO_WAIT, NULL, NULL);
 	if (ret != 0) {
@@ -135,7 +133,7 @@ static void button_work_handler(struct k_work *work)
 		enabled = toggle_led(&led);
 	}
 
-	send_status_can_msg(CAN_MESSAGE_ID_TARGET, enabled);
+	send_status_can_msg(CAN_MESSAGE_ID_TARGET);
 }
 
 /**
