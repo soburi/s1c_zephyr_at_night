@@ -19,12 +19,16 @@
 #include <zenoh-pico.h>
 
 #define SLEEP_TIME_MS	1
+#define CAN_MESSAGE_ID_SELF   0x28
 #define CAN_MESSAGE_ID_TARGET 0x28
+#define CAN_RX_QUEUE_SIZE     16
 #define LOCATOR_SIZE 96
 #define KEY_SIZE 96
 #define COMM_WORK_QUEUE_STACK_SIZE 1024
 #define COMM_WORK_QUEUE_PRIORITY 5
 #define APP_ZENOH_KEY_PREFIX "can"
+
+K_MSGQ_DEFINE(can_rx_queue, sizeof(uint32_t), CAN_RX_QUEUE_SIZE, sizeof(uint32_t));
 
 /*
  * デバイスツリーのsw0 のエイリアスをボタンとして使う。必須。
@@ -36,6 +40,8 @@
 static const struct gpio_dt_spec button = GPIO_DT_SPEC_GET_OR(SW0_NODE, gpios,
 							      {0});
 static struct gpio_callback button_cb_data;
+static struct k_work button_work;
+static struct k_work zenoh_publish_work;
 
 /**
  * デバイスツリーで led0のエイリアスが定義されていればそれを使う。オプション。
@@ -84,25 +90,41 @@ void publish_status(uint32_t msgid, uint8_t enabled)
 	}
 }
 
+static void zenoh_publish_work_handler(struct k_work *work)
+{
+	uint32_t received_id;
+
+	ARG_UNUSED(work);
+
+	while (k_msgq_get(&can_rx_queue, &received_id, K_NO_WAIT) == 0) {
+		if (led.port) {
+			if (received_id == CAN_MESSAGE_ID_SELF) {
+				(void)toggle_led(&led);
+			}
+		}
+
+		printk("CAN message received with ID 0x%03x\n", received_id);
+	}
+}
+
 static void on_zenoh_sample(z_loaned_sample_t *sample, void *context)
 {
-	bool enabled = 0;
-
-	if (led.port) {
-		enabled = toggle_led(&led);
-	}
-
+	uint32_t id;
 	z_view_string_t key;
 	z_keyexpr_as_view_string(z_sample_keyexpr(sample), &key);
-	printk("RX %.*s: LED -> %s\n", (int)z_string_len(z_loan(key)),
-		z_string_data(z_loan(key)), enabled ? "on" : "off");
+
+	if (k_msgq_put(&can_rx_queue, &id, K_NO_WAIT) != 0) {
+		return;
+	}
+
+	(void)k_work_submit(&zenoh_publish_work);
 }
 
 /**
- * ボタン押下時の処理
+ * ボタン押下時に遅延実行で行う処理.
+ * LEDの反転とCANメッセージの送信を行う
  */
-void button_pressed(const struct device *dev, struct gpio_callback *cb,
-		    uint32_t pins)
+static void button_work_handler(struct k_work *work)
 {
 	bool enabled = 0;
 
@@ -111,8 +133,18 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb,
 	}
 
 	publish_status(CAN_MESSAGE_ID_TARGET, enabled);
+}
 
+/**
+ * ボタン押下時の処理
+ * ログ出力とボタン押下時処理の登録を行う.
+ * 割込みのコールバックで時間のかかるCAN送信処理は行えない。
+ */
+void button_pressed(const struct device *dev, struct gpio_callback *cb,
+		    uint32_t pins)
+{
 	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
+	(void)k_work_submit(&button_work);
 }
 
 /*
@@ -131,6 +163,8 @@ int main(void)
 		return 0;
 	}
 
+	/* CANメッセージ受信時に実行するwork の初期化. */
+	k_work_init(&zenoh_publish_work, zenoh_publish_work_handler);
 	char locator[LOCATOR_SIZE];
 	(void)snprintf(locator, sizeof(locator), "serial/%s#baudrate=%d",
 		zenoh_uart_dev->name, CONFIG_APP_ZENOH_BAUDRATE);
@@ -162,7 +196,7 @@ int main(void)
 	}
 
 	if (ret != 0) {
-		printk("CAN start failed (%d)\n", ret);
+		printk("Zenoh subscriber start failed (%d)\n", ret);
 		z_drop(z_move(subscriber));
 		z_drop(z_move(session));
 		return 0;
@@ -192,6 +226,8 @@ int main(void)
 		return 0;
 	}
 
+	/* ボタン押下時に実行するwork の初期化. */
+	k_work_init(&button_work, button_work_handler);
 	/* 割込み発生時に button_pressed が呼ばれるように登録 */
 	gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
 	gpio_add_callback(button.port, &button_cb_data);
