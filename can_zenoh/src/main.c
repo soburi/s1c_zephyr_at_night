@@ -17,16 +17,14 @@
 #include <zephyr/sys/util.h>
 #include <zenoh-pico.h>
 
-#define LED_NODE DT_ALIAS(led0)
-#define SW0_NODE DT_ALIAS(sw0)
-#if !DT_NODE_HAS_STATUS_OKAY(SW0_NODE)
-#error "Unsupported board: sw0 devicetree alias is not defined"
-#endif
+#define SLEEP_TIME_MS	1
+#define CAN_MESSAGE_ID_SELF   0x28
+#define CAN_MESSAGE_ID_TARGET 0x28
 #define LOCATOR_SIZE 96
 #define KEY_SIZE 96
-#define CAN_MESSAGE_ID 0x28
 #define COMM_WORK_QUEUE_STACK_SIZE 1024
 #define COMM_WORK_QUEUE_PRIORITY 5
+#define APP_ZENOH_KEY_PREFIX "can"
 
 /*
  * Get button configuration from the devicetree sw0 alias. This is mandatory.
@@ -65,34 +63,6 @@ static bool toggle_led(struct gpio_dt_spec *led)
 	return led_state;
 }
 
-void button_pressed(const struct device *dev, struct gpio_callback *cb,
-		    uint32_t pins)
-{
-	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
-}
-
-/**
- * CAN送信処理
- */
-static void can_send_work_handler(struct k_work *work)
-{
-	const struct can_frame frame = {
-		.id = CAN_MESSAGE_ID,
-		.dlc = 1,
-		.data = { 1 },
-	};
-	int ret;
-
-	ARG_UNUSED(work);
-
-	ret = can_send(can_dev, &frame, K_MSEC(100), NULL, NULL);
-	if (ret != 0) {
-		printk("CAN send failed (%d)\n", ret);
-	} else {
-		printk("CAN message sent\n");
-	}
-}
-
 static int hex_digit(char value)
 {
 	if (value >= '0' && value <= '9') return value - '0';
@@ -121,6 +91,23 @@ static int can_id_from_key(const char *key, size_t key_len, uint32_t *id)
 	return *id <= CAN_STD_ID_MASK ? 0 : -EINVAL;
 }
 
+void send_status_can_msg(uint32_t canid, uint8_t enabled)
+{
+	struct can_frame frame = {0};
+	int ret;
+
+	frame.id = canid;
+	frame.dlc = 1;
+	frame.data[0] = enabled;
+
+	ret = can_send(can_dev, &frame, K_MSEC(100), NULL, NULL);
+	if (ret != 0) {
+		printk("Zenoh -> CAN failed for 0x%03x (%d)\n", frame.id, ret);
+		return;
+	}
+	printk("Zenoh -> CAN: 0x%03x (%u bytes)\n", frame.id, frame.dlc);
+}
+
 /**
  * CANメッセージを受け取ったときの動作
  * LEDを反転させる
@@ -134,24 +121,23 @@ static void can_received(const struct device *dev, struct can_frame *frame,
 		enabled = toggle_led(&led);
 	}
 
+	printk("CAN message received with ID 0x%03x\n", frame->id);
+}
 
+void publish_status(uint32_t msgid, uint8_t enabled)
+{
 	char key[KEY_SIZE];
 	z_view_keyexpr_t keyexpr;
 	z_owned_bytes_t payload;
 	int ret;
 
-	ARG_UNUSED(dev);
-	ARG_UNUSED(user_data);
-	if ((frame->flags & CAN_FRAME_RTR) != 0) return;
-
-	ret = snprintf(key, sizeof(key), "%s/%03x/rx",
-		       CONFIG_APP_ZENOH_KEY_PREFIX, frame->id);
+	ret = snprintf(key, sizeof(key), "%s/%03x/rx", APP_ZENOH_KEY_PREFIX, msgid);
 	if (ret < 0 || (size_t)ret >= sizeof(key)) {
 		printk("CAN -> Zenoh key is too long\n");
 		return;
 	}
 	z_view_keyexpr_from_str_unchecked(&keyexpr, key);
-	if (z_bytes_copy_from_buf(&payload, frame->data, frame->dlc) < 0) {
+	if (z_bytes_copy_from_buf(&payload, &enabled, 1) < 0) {
 		printk("CAN -> Zenoh payload allocation failed\n");
 		return;
 	}
@@ -159,9 +145,6 @@ static void can_received(const struct device *dev, struct can_frame *frame,
 		printk("CAN -> Zenoh failed: %s\n", key);
 		return;
 	}
-	if (led.port != NULL) (void)toggle_led(&led);
-	printk("CAN -> Zenoh: 0x%03x (%u bytes) -> %s\n",
-	       frame->id, frame->dlc, key);
 }
 
 /* Zenoh RX callback: send immediately, without an intermediate queue. */
@@ -208,6 +191,21 @@ static void on_zenoh_sample(z_loaned_sample_t *sample, void *context)
 	printk("Zenoh -> CAN: 0x%03x (%u bytes)\n", frame.id, frame.dlc);
 }
 
+void button_pressed(const struct device *dev, struct gpio_callback *cb,
+		    uint32_t pins)
+{
+	bool enabled = 0;
+
+	if (led.port) {
+		enabled = toggle_led(&led);
+	}
+
+	send_status_can_msg(CAN_MESSAGE_ID_TARGET, enabled);
+	publish_status(CAN_MESSAGE_ID_TARGET, enabled);
+
+	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
+}
+
 /*
  * main
  */
@@ -221,11 +219,6 @@ int main(void)
 
 	if (!device_is_ready(can_dev)) {
 		printk("CAN device is not ready\n");
-		return 0;
-	}
-
-	if (!device_is_ready(zenoh_uart_dev)) {
-		printk("Zenoh UART device is not ready\n");
 		return 0;
 	}
 
@@ -246,11 +239,16 @@ int main(void)
 		return 0;
 	}
 
+	if (!device_is_ready(zenoh_uart_dev)) {
+		printk("Zenoh UART device is not ready\n");
+		return 0;
+	}
+
 	char locator[LOCATOR_SIZE];
 	(void)snprintf(locator, sizeof(locator), "serial/%s#baudrate=%d",
 		zenoh_uart_dev->name, CONFIG_APP_ZENOH_BAUDRATE);
 	(void)snprintf(subscribe_key, sizeof(subscribe_key), "%s/*/tx",
-		       CONFIG_APP_ZENOH_KEY_PREFIX);
+		       APP_ZENOH_KEY_PREFIX);
 	printk("Connecting to zenohd at %s\n", locator);
 
 	z_owned_config_t config;

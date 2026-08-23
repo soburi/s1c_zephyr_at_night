@@ -125,13 +125,15 @@ int main(void)
 	int ret;
 
 	if (!device_is_ready(zenoh_uart_dev)) {
-		printk("CAN device is not ready\n");
+		printk("Zenoh UART device is not ready\n");
 		return 0;
 	}
 
 	char locator[LOCATOR_SIZE];
 	(void)snprintf(locator, sizeof(locator), "serial/%s#baudrate=%d",
 		zenoh_uart_dev->name, CONFIG_APP_ZENOH_BAUDRATE);
+	(void)snprintf(subscribe_key, sizeof(subscribe_key), "%s/*/tx",
+		       APP_ZENOH_KEY_PREFIX);
 	printk("Connecting to zenohd at %s\n", locator);
 
 	z_owned_config_t config;
