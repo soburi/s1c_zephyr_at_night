@@ -19,10 +19,12 @@
 #include <zenoh-pico.h>
 
 #define SLEEP_TIME_MS	1
+#define LOCATOR_SIZE 96
+#define KEY_SIZE 96
+#define CAN_MESSAGE_ID 0x28
 #define COMM_WORK_QUEUE_STACK_SIZE 1024
 #define COMM_WORK_QUEUE_PRIORITY 5
-
-#define LOCATOR_SIZE 96
+#define APP_ZENOH_KEY_PREFIX "can"
 
 /*
  * Get button configuration from the devicetree sw0 alias. This is mandatory.
@@ -44,11 +46,7 @@ static struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios,
 
 static const struct device *const zenoh_uart_dev = DEVICE_DT_GET(DT_ALIAS(zenoh_uart));
 
-static struct k_work_q workq;
-static struct k_work zenoh_publish_work;
-K_THREAD_STACK_DEFINE(workq_stack, COMM_WORK_QUEUE_STACK_SIZE);
-
-z_owned_publisher_t publisher;
+static z_owned_session_t session;
 
 static bool toggle_led(struct gpio_dt_spec *led)
 {
@@ -68,29 +66,36 @@ void button_pressed(const struct device *dev, struct gpio_callback *cb,
 		    uint32_t pins)
 {
 	printk("Button pressed at %" PRIu32 "\n", k_cycle_get_32());
-	k_work_submit_to_queue(&workq, &zenoh_publish_work);
-}
+	uint8_t enabled = 0;
 
-static void zenoh_publish_work_handler(struct k_work *work)
-{
-	bool enabled = toggle_led(&led);
-	const char *state = enabled ? "on" : "off";
+	if (led.port) {
+		enabled = (uint8_t)toggle_led(&led);
+	}
+
+
+	char key[KEY_SIZE];
+	z_view_keyexpr_t keyexpr;
 	z_owned_bytes_t payload;
+	int ret;
 
-	z_bytes_copy_from_str(&payload, state);
-	if (z_publisher_put(z_loan(publisher), z_move(payload), NULL) < 0) {
-		printk("Button publish failed\n");
-	} else {
-		if (enabled) {
-			printk("Button: LED -> on,");
-		} else {
-			printk("Button: LED -> off,");
-		}
-		printk("TX %s = %s\n", CONFIG_APP_ZENOH_PUB_KEY, state);
+	ret = snprintf(key, sizeof(key), "%s/%03x/rx",
+		       APP_ZENOH_KEY_PREFIX, CAN_MESSAGE_ID);
+	if (ret < 0 || (size_t)ret >= sizeof(key)) {
+		printk("CAN -> Zenoh key is too long\n");
+		return;
+	}
+	z_view_keyexpr_from_str_unchecked(&keyexpr, key);
+	if (z_bytes_copy_from_buf(&payload, &enabled, 1) < 0) {
+		printk("CAN -> Zenoh payload allocation failed\n");
+		return;
+	}
+	if (z_put(z_loan(session), z_loan(keyexpr), z_move(payload), NULL) < 0) {
+		printk("CAN -> Zenoh failed: %s\n", key);
+		return;
 	}
 }
 
-static void on_sample(z_loaned_sample_t *sample, void *context)
+static void on_zenoh_sample(z_loaned_sample_t *sample, void *context)
 {
 	bool enabled = 0;
 
@@ -109,6 +114,10 @@ static void on_sample(z_loaned_sample_t *sample, void *context)
  */
 int main(void)
 {
+	char subscribe_key[KEY_SIZE];
+	z_view_keyexpr_t sub_key;
+	z_owned_closure_sample_t callback;
+	z_owned_subscriber_t subscriber;
 	int ret;
 
 	if (!device_is_ready(zenoh_uart_dev)) {
@@ -130,39 +139,26 @@ int main(void)
 		return 0;
 	}
 
-	z_owned_session_t session;
 	if (z_open(&session, z_move(config), NULL) < 0) {
 		printk("Could not open the Zenoh session; check UART and zenohd\n");
 		return 0;
 	}
 
-
-	z_view_keyexpr_t pub_key;
-	z_view_keyexpr_from_str_unchecked(&pub_key, CONFIG_APP_ZENOH_PUB_KEY);
-	if (z_declare_publisher(z_loan(session), &publisher, z_loan(pub_key), NULL) < 0) {
-		printk("Could not declare publisher for %s\n", CONFIG_APP_ZENOH_PUB_KEY);
-		z_drop(z_move(session));
-		return 0;
-	}
-
-	z_view_keyexpr_t sub_key;
-	z_view_keyexpr_from_str_unchecked(&sub_key, CONFIG_APP_ZENOH_SUB_KEY);
-	z_owned_closure_sample_t callback;
-	z_closure(&callback, on_sample, NULL, NULL);
-	z_owned_subscriber_t subscriber;
+	z_view_keyexpr_from_str_unchecked(&sub_key, subscribe_key);
+	z_closure(&callback, on_zenoh_sample, NULL, NULL);
 	if (z_declare_subscriber(z_loan(session), &subscriber, z_loan(sub_key),
 				 z_move(callback), NULL) < 0) {
-		printk("Could not subscribe to %s\n", CONFIG_APP_ZENOH_SUB_KEY);
+		printk("Could not subscribe to %s\n", subscribe_key);
 		z_drop(z_move(session));
-		z_drop(z_move(subscriber));
 		return 0;
 	}
 
-
-	k_work_queue_start(&workq, workq_stack,
-			   K_THREAD_STACK_SIZEOF(workq_stack),
-			   COMM_WORK_QUEUE_PRIORITY, NULL);
-	k_work_init(&zenoh_publish_work, zenoh_publish_work_handler);
+	if (ret != 0) {
+		printk("CAN start failed (%d)\n", ret);
+		z_drop(z_move(subscriber));
+		z_drop(z_move(session));
+		return 0;
+	}
 
 	if (!gpio_is_ready_dt(&button)) {
 		printk("Error: button device %s is not ready\n",
