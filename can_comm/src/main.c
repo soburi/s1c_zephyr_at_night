@@ -65,7 +65,7 @@ void send_status_can_msg(uint32_t canid, uint8_t enabled)
 	frame.dlc = 1;
 	frame.data[0] = enabled;
 
-	ret = can_send(can_dev, &frame, K_MSEC(100), NULL, NULL);
+	ret = can_send(can_dev, &frame, K_NO_WAIT, NULL, NULL);
 	if (ret != 0) {
 		printk("Zenoh -> CAN failed for 0x%03x (%d)\n", frame.id, ret);
 		return;

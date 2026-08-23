@@ -100,28 +100,12 @@ void send_status_can_msg(uint32_t canid, uint8_t enabled)
 	frame.dlc = 1;
 	frame.data[0] = enabled;
 
-	ret = can_send(can_dev, &frame, K_MSEC(100), NULL, NULL);
+	ret = can_send(can_dev, &frame, K_NO_WAIT, NULL, NULL);
 	if (ret != 0) {
 		printk("Zenoh -> CAN failed for 0x%03x (%d)\n", frame.id, ret);
 		return;
 	}
 	printk("Zenoh -> CAN: 0x%03x (%u bytes)\n", frame.id, frame.dlc);
-}
-
-/**
- * CANメッセージを受け取ったときの動作
- * LEDを反転させる
- */
-static void can_received(const struct device *dev, struct can_frame *frame,
-			 void *user_data)
-{
-	bool enabled = 0;
-
-	if (led.port) {
-		enabled = toggle_led(&led);
-	}
-
-	printk("CAN message received with ID 0x%03x\n", frame->id);
 }
 
 void publish_status(uint32_t msgid, uint8_t enabled)
@@ -145,6 +129,24 @@ void publish_status(uint32_t msgid, uint8_t enabled)
 		printk("CAN -> Zenoh failed: %s\n", key);
 		return;
 	}
+}
+
+/**
+ * CANメッセージを受け取ったときの動作
+ * LEDを反転させる
+ */
+static void can_received(const struct device *dev, struct can_frame *frame,
+			 void *user_data)
+{
+	bool enabled = 0;
+
+	if (led.port) {
+		enabled = toggle_led(&led);
+	}
+
+	publish_status(frame->id, frame->data[0]);
+
+	printk("CAN message received with ID 0x%03x\n", frame->id);
 }
 
 /* Zenoh RX callback: send immediately, without an intermediate queue. */
@@ -322,8 +324,7 @@ int main(void)
 		}
 	}
 
-	printk("Ready: CAN -> %s/<ID>/rx, %s -> CAN\n",
-		CONFIG_APP_ZENOH_KEY_PREFIX, subscribe_key);
+	printk("Ready: CAN -> %s/<ID>/rx, %s -> CAN\n", APP_ZENOH_KEY_PREFIX, subscribe_key);
 
 	k_sleep(K_FOREVER);
 
