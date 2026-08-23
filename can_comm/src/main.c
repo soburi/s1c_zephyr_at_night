@@ -25,7 +25,7 @@
 K_MSGQ_DEFINE(can_rx_queue, sizeof(uint32_t), CAN_RX_QUEUE_SIZE, sizeof(uint32_t));
 
 /*
- * Get button configuration from the devicetree sw0 alias. This is mandatory.
+ * デバイスツリーのsw0 のエイリアスをボタンとして使う。必須。
  */
 #define SW0_NODE	DT_ALIAS(sw0)
 #if !DT_NODE_HAS_STATUS_OKAY(SW0_NODE)
@@ -38,8 +38,7 @@ static struct k_work button_work;
 static struct k_work can_rx_work;
 
 /*
- * The led0 devicetree alias is optional. If present, we'll use it
- * to turn on the LED whenever the button is pressed.
+ * デバイスツリーで led0のエイリアスが定義されていればそれを使う。オプション。
  */
 static struct gpio_dt_spec led = GPIO_DT_SPEC_GET_OR(DT_ALIAS(led0), gpios,
 						     {0});
@@ -120,6 +119,9 @@ static void button_work_handler(struct k_work *work)
 	send_status_can_msg(CAN_MESSAGE_ID_TARGET, enabled);
 }
 
+/* 
+ * ボタン押下時の処理
+ */
 void button_pressed(const struct device *dev, struct gpio_callback *cb,
 		    uint32_t pins)
 {
@@ -158,12 +160,14 @@ int main(void)
 		return 0;
 	}
 
+	/* ボタンが利用可能かのチェック */
 	if (!gpio_is_ready_dt(&button)) {
 		printk("Error: button device %s is not ready\n",
 		       button.port->name);
 		return 0;
 	}
 
+	/* ボタンの接続されているGPIOピンを入力モードにする */
 	ret = gpio_pin_configure_dt(&button, GPIO_INPUT);
 	if (ret != 0) {
 		printk("Error %d: failed to configure %s pin %d\n",
@@ -171,6 +175,7 @@ int main(void)
 		return 0;
 	}
 
+	/* ボタンの接続されているGPIOピンのエッジ割込み(L->H, H->L時) を有効にする */
 	ret = gpio_pin_interrupt_configure_dt(&button,
 					      GPIO_INT_EDGE_TO_ACTIVE);
 	if (ret != 0) {
@@ -180,16 +185,19 @@ int main(void)
 	}
 
 	k_work_init(&button_work, button_work_handler);
+	/* 割込み発生時に button_pressed が呼ばれるように登録 */
 	gpio_init_callback(&button_cb_data, button_pressed, BIT(button.pin));
 	gpio_add_callback(button.port, &button_cb_data);
 	printk("Set up button at %s pin %d\n", button.port->name, button.pin);
 
+	/* LEDのGPIOが有効かの確認 */
 	if (led.port && !gpio_is_ready_dt(&led)) {
 		printk("Error %d: LED device %s is not ready; ignoring it\n",
 		       ret, led.port->name);
 		led.port = NULL;
 	}
 	if (led.port) {
+		/* LEDが有効の場合、そのGPIOピンを出力モードに設定 */
 		ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT);
 		if (ret != 0) {
 			printk("Error %d: failed to configure LED device %s pin %d\n",
