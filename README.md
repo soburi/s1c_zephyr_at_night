@@ -84,6 +84,65 @@ python3 s1c_zephyr_at_night/tools/z_pub.py
 TX key=can/028/tx, payload=746f67676c65, length=6
 ```
 
+### macOS (Apple Silicon)
+
+Zephyrの公式Getting Started Guideが対応しているApple Silicon搭載Macが対象です。
+事前にmacOSを最新に更新し、Xcode Command Line Toolsをインストールしてください。
+
+```
+xcode-select --install
+```
+
+事前に[Homebrew](https://brew.sh/)をインストールしてから、ターミナルで以下を
+実行してください。
+
+```
+curl -LO https://raw.githubusercontent.com/soburi/s1c_zephyr_at_night/refs/heads/main/tools/swest28_setup_macos.bash
+bash swest28_setup_macos.bash
+```
+
+別のターミナルで以下のコマンドを実行し、ビルドを確認します。
+
+```
+cd ~/swest28
+source .venv/bin/activate
+west build -p -b nucleo_c562re zephyr/samples/basic/blinky
+```
+
+続けて、デバッガの確認を行います。
+
+```
+pyocd list --targets | grep stm32c562re
+```
+
+ツールの起動確認をします。別のターミナルを開いて以下のコマンドを実行します。
+
+
+```
+swest28/s1c_zephyr_at_night/tools/zenohd  -l "tcp/127.0.0.1:7447"
+```
+
+エラーなど発生せず、以下のログで待ち受けていれば成功です。
+
+```
+2026-08-23T22:22:57.528308Z  INFO main ThreadId(01) zenoh::net::runtime::orchestrator: Zenoh can be reached at: tcp/[240b:10:2f01:2600:6df0:fc2f:13f9:6de4]:7447
+2026-08-23T22:22:57.528366Z  INFO main ThreadId(01) zenoh::net::runtime::orchestrator: Zenoh can be reached at: tcp/[fe80::d893:daa7:a70d:2b89]:7447
+2026-08-23T22:22:57.528393Z  INFO main ThreadId(01) zenoh::net::runtime::orchestrator: Zenoh can be reached at: tcp/10.255.255.254:7447
+2026-08-23T22:22:57.528399Z  INFO main ThreadId(01) zenoh::net::runtime::orchestrator: Zenoh can be reached at: tcp/192.168.0.209:7447
+2026-08-23T22:22:57.539451Z  INFO main ThreadId(01) zenoh::net::runtime::orchestrator: Listening scout messages on 224.0.0.224:7446
+```
+
+pythonツールの起動確認をします。** 元のターミナルで ** 以下のコマンドを実行します。
+
+```
+python3 s1c_zephyr_at_night/tools/z_pub.py
+```
+
+以下のように表示されればOKです。
+
+```
+TX key=can/028/tx, payload=746f67676c65, length=6
+```
 
 ### Windowsネイティブ
 
