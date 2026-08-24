@@ -14,12 +14,6 @@ if [[ "$(uname -m)" != "arm64" ]]; then
   exit 1
 fi
 
-if [[ -e "${WORKSPACE_DIR}" ]]; then
-  echo "Error: ${WORKSPACE_DIR} already exists." >&2
-  echo "Move or remove it before running this script again." >&2
-  exit 1
-fi
-
 if ! xcode-select -p >/dev/null 2>&1; then
   echo "Error: Xcode Command Line Tools are required." >&2
   echo "Run 'xcode-select --install', complete the installation, and retry." >&2
@@ -49,3 +43,6 @@ west zephyr-export
 
 west sdk install -t arm-zephyr-eabi
 pyocd pack install stm32c562ret6
+
+cp s1c_zephyr_at_night/tools/zenohd_macos s1c_zephyr_at_night/tools/zenohd
+chmod +x s1c_zephyr_at_night/tools/zenohd
