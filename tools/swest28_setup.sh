@@ -19,3 +19,9 @@ west zephyr-export
 
 west sdk install -t arm-zephyr-eabi
 pyocd pack install stm32c562ret6
+
+if [ ! -e /etc/udev/rules.d/60-openocd.rules ] ; then
+  sudo cp ~/zephyr-sdk-1.0.1/hosttools/sysroots/x86_64-pokysdk-linux/usr/share/openocd/contrib/60-openocd.rules /etc/udev/rules.d/
+  sudo udevadm control --reload-rules
+  sudo udevadm trigger
+fi
